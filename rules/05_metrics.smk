@@ -59,7 +59,7 @@ rule volcano:
     log:
         run_info = "logs/volcano/{samples_id}/log.txt",
         time = "logs/volcano/{samples_id}/time.txt"
-    threads:2
+    hreads:2
     shell:
         'Rscript ../scripts/volcano2.R {input.outrider} {output} '
 rule boxplot:
@@ -86,7 +86,7 @@ rule boxplot:
     shell:
         """
         echo '{input.outrider}' &&
-        Rscript ../scripts/boxplots4444.R {params.dir} {output.box} {output.filt} {params.samples_id_str}
+        Rscript ../scripts/boxplots4.R {params.dir} {output.box} {output.filt} {params.samples_id_str}
         """
 rule rseqc:
     """
