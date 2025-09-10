@@ -1,0 +1,29 @@
+# params
+configuration:
+  outputDir: WORKDIR
+  samples: {SAMPLES}
+  fastq_dir : FASTQDIR
+
+run_annot_sake: true
+
+# Paramètres indépendants du JOB
+
+bed: /dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Covered_wo_chr.bed
+blacklist: /datawork/genetique/RNASeq/diag/prod/blacklist.txt
+di_bed: /dataref/bank/human/bed/DI.bed
+fraser_count: /datawork/genetique/RNASeq/diag/prod/Fraser2_2/
+genome: /dataref/bank/human/genome/GRCh38/ensembl/Homo_sapiens.GRCh38.dna.primary_assembly.fa
+gtfFile: /dataref/bank/human/annotation/GRCh38/ensembl/current/Homo_sapiens.GRCh38.106.gtf
+hpo: /dataref/bank/human/annotation/GRCh38/hpo/phenotype.hpoa
+kallisto_idx: /dataref/bank/human/genome/GRCh38/kallisto/kallisto_bed/transcripts_bed.idx
+matrice_tpm: /datawork/genetique/RNASeq/diag/matrices_comptage_tpm_gene/
+matrices: /datawork/genetique/RNASeq/diag/matrices_comptage/
+padded: /dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Padded_wo_chr.bed
+panelapp: /dataref/bank/human/annotation/GRCh38/current/DI_green.tsv
+pheno: /dataref/bank/human/annotation/GRCh38/hpo/genes_to_phenotype.txt
+pli: /dataref/bank/human/annotation/GRCh38/PLI.vcf
+rsem_genome: /dataref/bank/human/genome/rsem/hg38
+rseq_bed: /dataref/bank/human/bed/rseqc_hg38.bed
+run_annot_sake: true
+star_folder: /dataref/bank/human/genome/GRCh38/STAR/
+star_genome: /dataref/bank/human/genome/GRCh38/STAR/

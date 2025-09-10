@@ -1,0 +1,16 @@
+channels:
+    - conda-forge
+    - bioconda
+dependencies:
+    - r-base
+    - r-dplyr 
+    - bioconductor-fraser
+    - python
+    - pandas
+    - openpyxl
+    - pathlib
+    - pyarrow
+    - altair
+    - tqdm
+    - python-duckdb=0.10.1
+    - polars=0.20.7      
