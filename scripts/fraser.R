@@ -1,0 +1,28 @@
+library(FRASER)
+
+if (length(commandArgs(trailingOnly = TRUE)) != 3) {
+    stop("Please provide the output directory of run analysis.")
+}
+
+count_dir <- commandArgs(trailingOnly = TRUE)[1]
+config_file <- commandArgs(trailingOnly = TRUE)[2]
+output_file <- commandArgs(trailingOnly = TRUE)[3]
+
+
+register(MulticoreParam(workers = 10))
+#print(config_file)
+
+sampleTable <- fread(config_file)
+settings <- FraserDataSet(colData=sampleTable, workingDir=count_dir)
+strandSpecific(settings) <- "reverse"
+fds <- countRNAData(settings)
+fds <- calculatePSIValues(fds)
+fds <- filterExpressionAndVariability(fds, minExpressionInOneSample=10,minDeltaPsi=0.0, filter=TRUE)
+register(MulticoreParam(workers = 10))
+#strandSpecific(fds) <- "reverse"
+fds <- FRASER(fds, q=2, implementation="PCA")
+fds <- annotateRanges(fds,GRCh=38)
+res <- results(fds, padjCutoff=NA, deltaPsiCutoff=NA)
+
+write.table(res, file=output_file, sep="\t")
+
