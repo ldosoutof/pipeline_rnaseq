@@ -4,7 +4,7 @@
 
 conda activate snakemake
 
-conda_prefix="~/pipeline/RNASEQ/routine/.snakemake/conda"
+conda_prefix="~/pipeline/RNASEQ/routine/conda_env"
 
 snakefile="ROOT_PIPELINE/snakemake/pipeline.smk"
 config_file="PATH_TO_CONFIG"
@@ -18,5 +18,13 @@ echo "Creating rulegraph..."
 snakemake -s $snakefile --configfile $config_file --rulegraph | dot -Tpng > ${path_to_launch}"/rulegraph.png"
 
 echo "Launching pipeline"
-snakemake -s  $snakefile --configfile $config_file  --latency-wait 60 -j 100 --resources mem_gb=400 --restart-times 2 --rerun-incomplete --use-conda  --conda-prefix "$conda_prefix" --conda-frontend conda
+snakemake \
+            -s  $snakefile \
+                            --configfile $config_file \
+                                                --latency-wait 60 \                                                          
+					                    --resources mem_gb=400 \
+                                                                                                                            --restart-times 2 \
+                                                                                                                                                        --rerun-incomplete \
+                                                                                                                                                                                          --use-conda  --conda-prefix "$conda_prefix" --conda-frontend conda
+
 

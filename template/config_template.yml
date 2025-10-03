@@ -3,13 +3,11 @@ configuration:
   outputDir: WORKDIR
   samples: {SAMPLES}
   fastq_dir : FASTQDIR
+  pipeline_dir : 
 
 run_annot_sake: true
 
 # Paramètres indépendants du JOB
-
-bed: /dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Covered_wo_chr.bed
-blacklist: /datawork/genetique/RNASeq/diag/prod/blacklist.txt
 di_bed: /dataref/bank/human/bed/DI.bed
 fraser_count: /datawork/genetique/RNASeq/diag/prod/Fraser2_2/
 genome: /dataref/bank/human/genome/GRCh38/ensembl/Homo_sapiens.GRCh38.dna.primary_assembly.fa
@@ -27,3 +25,8 @@ rseq_bed: /dataref/bank/human/bed/rseqc_hg38.bed
 run_annot_sake: true
 star_folder: /dataref/bank/human/genome/GRCh38/STAR/
 star_genome: /dataref/bank/human/genome/GRCh38/STAR/
+bed: /dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Covered_wo_chr.bed
+outrider_blacklist: "/datawork/genetique/RNASeq/diag/prod/blacklist_outrider.txt"
+fraser_blacklist: "/datawork/genetique/RNASeq/diag/prod/blacklist_fraser.txt"
+pca_blacklist: "/datawork/genetique/RNASeq/diag/prod/blacklist_PCA.txt"
+runs_dir: "/datawork/genetique/RNASeq/diag/prod/"
