@@ -89,6 +89,7 @@ config["configuration"]["samples"] = sample_ids
 config["configuration"]["outputDir"] = str(path_workdir)
 #config["configuration"]["inputDir"] = "/tmp/Data"
 config["configuration"]["fastq_dir"] = str(path_data/ 'fastq')
+config["configuration"]["pipeline_dir"] = str(path_pipeline)
 
 with open(new_config, "w+") as fp:
     yaml.dump(config, fp)

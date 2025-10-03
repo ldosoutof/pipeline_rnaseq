@@ -9,7 +9,7 @@ config_file <- commandArgs(trailingOnly = TRUE)[2]
 output_file <- commandArgs(trailingOnly = TRUE)[3]
 
 
-register(MulticoreParam(workers = 10))
+register(MulticoreParam(workers = 12))
 #print(config_file)
 
 sampleTable <- fread(config_file)
@@ -18,11 +18,11 @@ strandSpecific(settings) <- "reverse"
 fds <- countRNAData(settings)
 fds <- calculatePSIValues(fds)
 fds <- filterExpressionAndVariability(fds, minExpressionInOneSample=10,minDeltaPsi=0.0, filter=TRUE)
-register(MulticoreParam(workers = 10))
+register(MulticoreParam(workers = 12))
 #strandSpecific(fds) <- "reverse"
 fds <- FRASER(fds, q=2, implementation="PCA")
 fds <- annotateRanges(fds,GRCh=38)
 res <- results(fds, padjCutoff=NA, deltaPsiCutoff=NA)
-
+res$sampleID <- sub("^X", "", res$sampleID)
 write.table(res, file=output_file, sep="\t")
 

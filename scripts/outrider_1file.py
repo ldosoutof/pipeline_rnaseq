@@ -22,8 +22,10 @@ if output_dir and not os.path.exists(output_dir):  # Check if directory exists, 
 
 # Group by sampleID and write to separate files
 for sample_id, group in df.groupby('sampleID'):
+    clean_id = str(sample_id).lstrip('X').split('.')[0]
+    clean_id = str(clean_id).lstrip('X').split('_')[0]
     # Create a filename based on the sampleID and the provided basename
-    output_file = os.path.join(output_dir, f'{output_dir}/{sample_id}.outrider.tab')
+    output_file = os.path.join(output_dir, f'{output_dir}/{clean_id}.outrider.tab')
 
     # Write the group to the file
     group.to_csv(output_file, sep='\t', index=False)

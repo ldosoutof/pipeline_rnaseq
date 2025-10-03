@@ -16,25 +16,35 @@ def extract_run_number(bam_path):
                 continue
     return 0
 
-def backup_fraser_counts(fraser_output_dir):
-    if not os.path.exists(fraser_output_dir):
-        print(f"No FRASER folder at {fraser_output_dir} to backup.")
-        return
-    tmp_dir = fraser_output_dir + "_tmp"
-    shutil.copytree(fraser_output_dir, tmp_dir)
-    shutil.rmtree(fraser_output_dir)
-    os.makedirs(f"{fraser_output_dir}/savedObjects/Data_Analysis", exist_ok=True)
-    for sub in ["nonSplitCounts", "splitCounts"]:
-        src = f"{tmp_dir}/savedObjects/Data_Analysis/{sub}"
-        dst = f"{fraser_output_dir}/savedObjects/Data_Analysis/{sub}"
-        if os.path.exists(src):
-            shutil.copytree(src, dst)
-    shutil.rmtree(tmp_dir)
-    print("✅ Saved counts backup restored.")
+#def backup_fraser_counts(fraser_output_dir):
+#    if not os.path.exists(fraser_output_dir):
+#        print(f"No FRASER folder at {fraser_output_dir} to backup.")
+#        return
+#
+#    tmp_dir = fraser_output_dir + "_tmp"
+#
+#    # ✅ Remove any leftover tmp directory from previous runs
+#    if os.path.exists(tmp_dir):
+#        shutil.rmtree(tmp_dir)
+#
+#    # Copy the full FRASER directory to a temporary backup
+#    shutil.copytree(fraser_output_dir, tmp_dir)
+#
+#    # Remove the original and recreate the minimal folder structure
+#    shutil.rmtree(fraser_output_dir)
+#    os.makedirs(os.path.join(fraser_output_dir, "savedObjects", "Data_Analysis"),
+#                exist_ok=True)
+#    for sub in ["nonSplitCounts", "splitCounts"]:
+#        src = f"{tmp_dir}/savedObjects/Data_Analysis/{sub}"
+#        dst = f"{fraser_output_dir}/savedObjects/Data_Analysis/{sub}"
+#        if os.path.exists(src):
+#            shutil.copytree(src, dst)
+#    shutil.rmtree(tmp_dir)
+#    print("✅ Saved counts backup restored.")
 
 def generate_config_fraser(output_filename, pattern, root_dir, fraser_output_dir, blacklist_file=None):
     # Backup existing FRASER counts
-    backup_fraser_counts(fraser_output_dir)
+    #backup_fraser_counts(fraser_output_dir)
 
     # Load blacklist
     blacklist = set()
@@ -48,9 +58,17 @@ def generate_config_fraser(output_filename, pattern, root_dir, fraser_output_dir
     # Collect BAMs by sample_id
     sample_to_bams = defaultdict(list)
     for dirpath, dirnames, filenames in os.walk(root_dir):
+        if "RNASEQ" not in dirpath or "star" not in dirpath:
+            continue
         for filename in filenames:
             if filename.endswith('Aligned.sortedByCoord.out.bam') and pattern in filename:
-                sample_id = filename.split('-')[0]
+                #sample_id = filename.split('-')[0]
+                if "-" in filename:
+                    sample_id = filename.split("-")[0]
+                elif "_" in filename:
+                    sample_id = filename.split("_")[0]
+                else:
+                    sample_id=filename  # no dash or underscore
                 if sample_id in blacklist or 'RUN17' in dirpath:
                     continue
                 bam_path = os.path.join(dirpath, filename)

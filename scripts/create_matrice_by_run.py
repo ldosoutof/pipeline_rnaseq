@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import pandas as pd
+pd.set_option('future.no_silent_downcasting', True)
 import sys
 from datetime import date
 from collections import defaultdict
@@ -48,7 +49,7 @@ for run in runs:
 
     for root, _, files in os.walk(htseq_dir):
         for file in files:
-            if file.endswith("_gene_counts.txt") and "PUROMOINS" in file:
+            if file.endswith("_gene_counts.txt") and "MOINS" in file:
                 sample_name = file.replace("_gene_counts.txt", "")
 
                 if any(sample_name.startswith(prefix) for prefix in blacklist):
@@ -75,7 +76,7 @@ all_counts.fillna(0, inplace=True)
 all_counts.set_index("ENSG", inplace=True)
 
 # Keep only samples starting with "2" and remove POLYA
-all_counts = all_counts.loc[:, all_counts.columns.str.startswith("2")]
+all_counts = all_counts.loc[:, all_counts.columns.str.startswith(("1","2"))]
 all_counts = all_counts.loc[:, ~all_counts.columns.str.contains("POLYA")]
 
 # ---------------- Resolve duplicate sample IDs ----------------
@@ -84,7 +85,13 @@ simplified_names = all_counts.columns.to_series().apply(lambda x: x.split("-")[0
 duplicate_ids = simplified_names[simplified_names.duplicated()].unique().tolist()
 name_map = defaultdict(list)
 for full_name in all_counts.columns:
-    short_name = full_name.split("-")[0]
+    #short_name = full_name.split("-")[0]
+    if "-" in full_name:
+        short_name = full_name.split("-")[0]
+    elif "_" in full_name:
+        short_name = full_name.split("_")[0]
+    else:
+        short_name = full_name  # no dash or underscore
     name_map[short_name].append(full_name)
 
 def get_run_number(colname):
@@ -103,7 +110,8 @@ all_counts = all_counts.drop(columns=to_drop)
 
 # ---------------- Write dated matrix ----------------
 today = date.today().strftime("%Y%m%d")
-file_name = f"{today}_matrice.txt"
+#file_name = f"{today}_matrice.txt"
+file_name = f"matrice.txt"
 os.makedirs(out_dir, exist_ok=True)
 
 out_path = os.path.join(out_dir, file_name)
