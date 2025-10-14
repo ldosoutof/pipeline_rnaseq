@@ -61,6 +61,22 @@ workdir: OUTPUT_REP
 
 SAMPLES_ID = [s[:7] for s in SAMPLES]
 
+def active_samples(blacklist_file, samples=SAMPLES_ID):
+    """
+    Return list of sample IDs excluding any in the blacklist file.
+    If the blacklist file does not exist, return all samples.
+    """
+    if os.path.exists(blacklist_file):
+        with open(blacklist_file) as f:
+            excluded = set(f.read().split())
+    else:
+        excluded = set()
+    return [s for s in samples if s not in excluded]
+ACTIVE_FRASER = active_samples(fraser_blacklist)
+ACTIVE_OUTRIDER = active_samples(outrider_blacklist)
+ACTIVE_PCA = active_samples(PCA_blacklist)
+
+
 rule all:
     input:
         expand(FASTQ_DIR+"/{sample}_R1.fastq.gz",sample=SAMPLES),
@@ -82,12 +98,11 @@ rule all:
         expand(rules.multiqc.output, sample=SAMPLES), 
         expand(rules.outrider.output.out_file, sample=SAMPLES),
         expand(rules.fraser_config.output, sample=SAMPLES),
-        expand(rules.fraser.output.fraser, sample=SAMPLES),
-        expand(rules.fraser_annot_rare.output.fraser_rare, samples_id=SAMPLES_ID),
-        expand(rules.outrider_annot_rare.output.outrider_rare, samples_id=SAMPLES_ID),
-        expand(rules.volcano.output, samples_id=SAMPLES_ID),
-        expand(rules.boxplot.output.filt, samples_id=SAMPLES_ID),
-        expand(rules.fraser_boxplot.output.filt, samples_id=SAMPLES_ID),
+        rules.fraser.output.fraser,
+        expand(rules.fraser.output.fraser),
+        expand(rules.fraser_boxplot.output.filt, samples_id=ACTIVE_FRASER),
+        expand(rules.volcano.output, samples_id=ACTIVE_PCA),
+        expand(rules.boxplot.output.filt, samples_id=ACTIVE_PCA),
         rules.generate_and_run_param_notebook.output.executed_nb,
         rules.generate_metrics.output.metrics
 
