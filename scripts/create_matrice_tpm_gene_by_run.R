@@ -76,7 +76,7 @@ dfList <- lapply(lst, function(x) {
 
 ## combining all the dataframes into single dataframe
 mat <- bind_cols(dfList)
-mat<-mat[,-1]
+#mat<-mat[,-1]
 print(head(mat))
 # Return the gene-level counts or save them to a file
 write.table(mat, file = paste0(root_dir, "/marice_gene_tpm.tsv"), sep = "\t", quote = FALSE,col.names=NA)
@@ -94,7 +94,7 @@ rownames_mat <-row.names(mat)
    matched_genes <- merge(gene_info, row_names, by.x = "gene_id", by.y = "Ensembl_ID")
    matched_genes$gene_name[is.na(matched_genes$gene_name)] <- as.character(matched_genes$gene_id[is.na(matched_genes$gene_name)])
    rownames(mat_bind) <- make.unique(matched_genes$gene_name)
-   matriceTPM2 <- mat_bind[,-1]
+   matriceTPM2 <- mat_bind
    colnames(matriceTPM2) <- gsub("^X", "", colnames(matriceTPM2))
    #print(head(mat_bind))
    write.table(matriceTPM2, file = paste0(root_dir, "/marice_gene_tpm_gene.tsv"), sep = "\t", quote = FALSE, col.names=NA)
