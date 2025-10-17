@@ -185,9 +185,15 @@ nb.cells.append(nbf.v4.new_code_cell("""
 name_folders = glob.glob(f"{base}/{samples_run}/pipeline_v0/htseq/*")
 #samples_run_list = [os.path.basename(f.strip('/')).split(r'[-_]')[0] for f in name_folders]
 samples_run_list = [re.split(r'[-_.]', os.path.basename(f.strip('/')))[0][:7] for f in name_folders]
+print(f"samples: {samples_run_list}")
+test = df_pca['SampleShort'][0]
+print(f"samples in pca: {test}")
 df_pca['Color'] = ["red" if s in samples_run_list else "lightgray" for s in df_pca['SampleShort']]
+red_samples = df_pca.loc[df_pca['Color'] == "red", 'SampleShort'].tolist()
+gray_samples = df_pca.loc[df_pca['Color'] == "lightgray", 'SampleShort'].tolist()
+print(f"samples in pca RED: {red_samples}")
 """))
-
+#print(samples_run_list)
 # =========================
 # 11) Plot PCA
 # =========================
