@@ -110,10 +110,11 @@ for dup_file in dup_files:
         sample_row["nb event fraser"] = None
 
     # === TPM VALUES FOR TARGET GENES ===
-    #tpm_sample_id = sample_id.replace("-", ".").replace("_", ".")
+    tpm_sample_id = sample_id.replace("-", ".").replace("_", ".")
+    #print(tpm_df)
     for gene in target_genes:
         try:
-            sample_row[gene] = tpm_df.at[gene, sample_id]
+            sample_row[gene] = tpm_df.at[gene, tpm_sample_id]
         except KeyError:
             sample_row[gene] = None
 
@@ -123,8 +124,8 @@ for dup_file in dup_files:
 # === Percentage of DI_green genes with TPM > 10 ===
     try:
         if di_genes:
-            #tpm_sample_id = sample_id.replace("-", ".").replace("_", ".")
-            tpm_sample_id = sample_id
+            tpm_sample_id = sample_id.replace("-", ".").replace("_", ".")
+            #tpm_sample_id = sample_id
             if tpm_sample_id in tpm_df.columns:
                 sample_tpms = tpm_df[tpm_sample_id]
                 intersect_genes = di_genes.intersection(sample_tpms.index)
