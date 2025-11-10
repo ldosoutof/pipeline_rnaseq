@@ -1,13 +1,36 @@
+# ----------------------
+# 03_comptage_save.smk
+# ----------------------
+
 from datetime import datetime
-DATE = datetime.now().strftime("%Y-%m-%d")  # or another format you prefer, e.g. "%Y%m%d"
+
+DATE = datetime.now().strftime("%Y-%m-%d")
+
+# ----------------------
+# TOOL VERSION DICTIONARY
+# ----------------------
+TOOL_VERSIONS = {
+    "htseq": get_version_from_env(PIPELINE_DIR + "/envs/htseq_env.yml",
+                                  "htseq-count --version | head -1 | cut -d' ' -f2"),
+    "kallisto": get_version_from_env(PIPELINE_DIR + "/envs/count_env.yml",
+                                     "kallisto version"),
+    "tx2gene": get_version_from_env(PIPELINE_DIR + "/envs/htseq_env.yml",
+                                    "Rscript --version | head -1"),
+    "tpm": get_version_from_env(PIPELINE_DIR + "/envs/htseq_env.yml",
+                                "Rscript --version | head -1")
+}
+
+# ----------------------
+# RULES
+# ----------------------
+
 rule htseq_gene:
     """
-    comptage gene avec htseq, comptage absolu
+    Count genes using HTSeq (absolute counts)
     """
+    version: TOOL_VERSIONS["htseq"]
     input:
-        bamg= FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam",
-        dir = FASTQ_DIR,
-        out = OUTPUT_REP
+        bamg = rules.alignment_star.output.bam,
     output:
         gene = FASTQ_DIR + "/../pipeline_v0/htseq/{sample}/{sample}_gene_counts.txt",
     conda:
@@ -15,35 +38,29 @@ rule htseq_gene:
     params:
         gtf=GTF
     benchmark:
-        "benchmarks/htseq_g/{sample}.tsv"
-    version: # pour récupérer la version de l'outil avec une commande shell
-        subprocess.getoutput(
-            "htseq-count --version | "
-            "head -1 | "
-            "cut -d' ' -f2"
-        )
+        "benchmarks/htseq/{sample}.tsv"
     log:
-        run_info = "log/htseq_g/{sample}/log.txt",
-        time = "log/htseq_g/{sample}/time.txt"
-    threads:2
-    resources:
-        single_job=16
+        run_info = "log/htseq/{sample}/log.txt",
+        time = "log/htseq/{sample}/time.txt"
+    threads: 2
     shell:
-        'echo "start : $(date +"%d-%m-%y   %T")" > {log.time} && '
+        """
+        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
+        htseq-count -s reverse -r pos -f bam {input.bamg} {params.gtf} -i gene_id \
+            > {output.gene}.tmp 2> {log.run_info}
+        sed -n '/^ENSG/,$p' {output.gene}.tmp > {output.gene} 2>&1 | tee -a {log.run_info}
+        rm {output.gene}.tmp
+        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        """
 
-        "htseq-count -s reverse -r pos -f bam {input.bamg} {params.gtf} -i gene_id > {input.dir}/../pipeline_v0/htseq/{wildcards.sample}/{wildcards.sample}_gene_counts.txt.tmp 2> {log.run_info} && "
-        "sed -n '/^ENSG/,$p' {input.dir}/../pipeline_v0/htseq/{wildcards.sample}/{wildcards.sample}_gene_counts.txt.tmp > {input.dir}/../pipeline_v0/htseq/{wildcards.sample}/{wildcards.sample}_gene_counts.txt 2>&1 | tee -a {log.run_info} && "
-        "rm {input.dir}/../pipeline_v0/htseq/{wildcards.sample}/{wildcards.sample}_gene_counts.txt.tmp && "
-        'echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}'
 rule matrix:
     """
-    Create gene count matrix for all PUROMOINS samples in a run,
-    apply blacklist filtering, remove POLYA samples, and resolve duplicates.
+    Create gene count matrix for all samples, apply blacklist filtering, remove duplicates
     """
     input:
-        base_dir = FASTQ_DIR + "/../..",
-        htseq = expand(FASTQ_DIR + "/../pipeline_v0/htseq/{sample}/{sample}_gene_counts.txt", sample=SAMPLES),
-        blacklist = outrider_blacklist
+        htseq = expand(rules.htseq_gene.output.gene, sample=SAMPLES),
+        blacklist = outrider_blacklist,
+        base_dir = FASTQ_DIR + "/../.."
     output:
         matrix = FASTQ_DIR + "/../pipeline_v0/htseq/matrice.txt"
     params:
@@ -51,101 +68,99 @@ rule matrix:
         scripts = PIPELINE_DIR
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
-    threads: 8
     log:
         run_info = "log/matrix/log.txt",
         time = "log/matrix/time.txt"
+    threads: 8
     shell:
         """
-        python {params.scripts}/scripts/create_matrice_by_run.py {input.base_dir} {params.out_dir} {input.blacklist}  >> {log.run_info} 2>&1
+        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
+        python {params.scripts}/scripts/create_matrice_by_run.py {input.base_dir} {params.out_dir} {input.blacklist} >> {log.run_info} 2>&1
+        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
         """
+
 rule kallistoBed:
     """
-    kallisto : comptage des genes avec l'option strand (protocole stranded)
+    Kallisto quantification (stranded protocol)
     """
+    version: TOOL_VERSIONS["kallisto"]
     input:
-        R1=FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}_R1_trimmed.fastq.gz",
-        R2=FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}_R2_trimmed.fastq.gz",
-        #R1 = rules.fastp.output.R1,
-        #R2 = rules.fastp.output.R2,
-        dir = FASTQ_DIR,
-        out = OUTPUT_REP
+        R1 = rules.fastp.output.R1,
+        R2 = rules.fastp.output.R2,
+        dir = FASTQ_DIR
     output:
-        abund=FASTQ_DIR + "/../pipeline_v0/kallisto_bed/{sample}/abundance.tsv",
-        h5=FASTQ_DIR + "/../pipeline_v0/kallisto_bed/{sample}/abundance.h5"
+        abund = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/{sample}/abundance.tsv",
+        h5 = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/{sample}/abundance.h5"
     conda:
         PIPELINE_DIR + "/envs/count_env.yml"
     params:
         index=KALLISTO_IDX
-    version: # pour récupérer la version de l'outil avec une commande shell
-        subprocess.getoutput(
-            "kallisto | "
-            "head -1 | "
-            "cut -d' ' -f2"
-        )
-    resources:
-        single_job=16
     benchmark:
         "benchmarks/kallisto_bed/{sample}.tsv"
     log:
         run_info = "log/kallisto_bed/{sample}/log.txt",
         time = "log/kallisto_bed/{sample}/time.txt"
-    threads:8
+    threads: 8
     shell:
-        'echo "start : $(date +"%d-%m-%y   %T")" > {log.time} && '
-        "kallisto quant -t {threads} -i {params.index} --rf-stranded -o {input.dir}/../pipeline_v0/kallisto_bed/{wildcards.sample} {input.R1} {input.R2} > {log.run_info} 2>&1 && "
-        'echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}'
+        """
+        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
+        kallisto quant -t {threads} -i {params.index} --rf-stranded -o {input.dir}/../pipeline_v0/kallisto_bed/{wildcards.sample} \
+            {input.R1} {input.R2} > {log.run_info} 2>&1
+        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        """
+
 rule kallisto2gene:
     """
-    modifie gene ensembl en gene name en passant par le gtf
+    Convert Ensembl gene IDs to gene names
     """
+    version: TOOL_VERSIONS["tx2gene"]
     input:
-         h5=FASTQ_DIR + "/../pipeline_v0/kallisto_bed/{sample}/abundance.h5"
+        h5 = rules.kallistoBed.output.h5
     output:
-         FASTQ_DIR + "/../pipeline_v0/kallisto_bed/{sample}/abundance_gene_level_counts.tsv"
+        gene_level = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/{sample}/abundance_gene_level_counts.tsv"
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
-    benchmark:
-        "benchmarks/tx2gene/{sample}.tsv"
     params:
-       scripts = PIPELINE_DIR
+        scripts = PIPELINE_DIR
     log:
         run_info = "log/tx2gene/{sample}/log.txt",
         time = "log/tx2gene/{sample}/time.txt"
-    threads:8
-    resources:
-        single_job=4
+    benchmark:
+        "benchmarks/tx2gene/{sample}.tsv"
+    threads: 8
     shell:
-        'echo "start : $(date +"%d-%m-%y   %T")" > {log.time} && '
-        "Rscript  {params.scripts}/scripts/tx2gene.R {input.h5} && "
-        'echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}'
+        """
+        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
+        Rscript {params.scripts}/scripts/tx2gene.R {input.h5}
+        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        """
+
 rule matrix_tpm:
     """
-    creer matrice pour kallisto (utilisation pour cibersortx)
+    Create TPM matrix for Kallisto results
     """
+    version: TOOL_VERSIONS["tpm"]
     input:
-        htseq = expand(FASTQ_DIR + "/../pipeline_v0/kallisto_bed/{sample}/abundance_gene_level_counts.tsv", sample=SAMPLES),
-        dir = FASTQ_DIR,
-        out = OUTPUT_REP
+        counts = expand(rules.kallisto2gene.output.gene_level, sample=SAMPLES),
+        dir = FASTQ_DIR
     output:
-        gene = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/marice_gene_tpm.tsv",
-        gene_gene = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/marice_gene_tpm_gene.tsv"
+        gene = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/matrice_gene_tpm.tsv",
+        gene_gene = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/matrice_gene_tpm_gene.tsv"
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
     params:
-        matrix=TPM,
-        gtf=GTF,
-        scripts = PIPELINE_DIR
-    benchmark:
-        "benchmarks/matrixtpm/mat.tsv"
+        scripts = PIPELINE_DIR,
+        matrix_dir = TPM,
+        gtf = GTF
     log:
         run_info = "log/matrixtpm/log.txt",
         time = "log/matrixtpm/time.txt"
-    threads:8
-    resources:
-        single_job=4
+    benchmark:
+        "benchmarks/matrixtpm/mat.tsv"
+    threads: 8
     shell:
-        'echo "start : $(date +"%d-%m-%y   %T")" > {log.time} && '
-        "Rscript  {params.scripts}/scripts/create_matrice_tpm_gene_by_run.R {input.dir}/../ {params.matrix}/ {params.gtf} && "
-        'echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}'
-
+        """
+        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
+        Rscript {params.scripts}/scripts/create_matrice_tpm_gene_by_run.R {input.dir}/../ {params.matrix_dir}/ {params.gtf}
+        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        """

@@ -1,40 +1,43 @@
+TOOL_VERSIONS = {
+    "star": get_version_from_env(
+        PIPELINE_DIR + "/envs/star_env.yml",
+        "STAR --version | head -1 | cut -d' ' -f2"
+    ),
+    "samtools": get_version_from_env(
+        PIPELINE_DIR + "/envs/samtools_env.yml",
+        "samtools --version | head -1 | cut -d' ' -f2"
+    ),
+}
+
+# ----------------------
 rule alignment_star:
     """
-    Alignement des fastq avec l'outil star
-    2 pass
-    bam genome et transcriptome (sort pour le transcriptome)
+    Align reads to the genome using STAR
     """
+    version: TOOL_VERSIONS["star"]
     input:
-        R1=FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}_R1_trimmed.fastq.gz",
-        R2=FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}_R2_trimmed.fastq.gz",
-        dir = FASTQ_DIR,
-        out = OUTPUT_REP        
+        R1 = rules.fastp.output.R1, 
+        R2 = rules.fastp.output.R2,
+        dir = FASTQ_DIR
     output:
-        bamg= FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam",
+        bam = os.path.abspath(FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam"),
+        temps= temp(directory(FASTQ_DIR + "/../pipeline_v0/star/{sample}_tmp"))
     conda:
-        "../envs/comptage_env.yml"
+        PIPELINE_DIR + "/envs/comptage_env.yml"
     params:
-        star_genome=STAR_GENOME
+        star_genome=STAR_GENOME,
     resources:
-        tmpdir= OUTPUT_REP + "/star/tmp",
+        tmpdir= temp(OUTPUT_REP + "/star/tmp"),
         single_job=8,
-        mem_gb=60  # Set the memory resource limit to 60GB
     benchmark:
         "benchmarks/alignement/{sample}.tsv"
     log:
-        run_info = "logs/star/{sample}/log.txt",
-        time = "logs/star/{sample}/time.txt"
-    version: # pour récupérer la version de l'outil avec une commande shell 
-        subprocess.getoutput(
-            "STAR --version | "
-            "head -1 | "
-            "cut -d' ' -f2"
-        )
-    threads:12
+        run_info = "log/star/{sample}/star.log",
+        time = "log/star/{sample}/star_time.txt"
+    threads: 16
     shell:
         'echo "start : $(date +"%d-%m-%y   %T")" > {log.time} && '
-        "if [ ! -d {input.dir}/../pipeline_v0/star ]; then mkdir {input.dir}/../pipeline_v0/star; fi && "
-        "if [ ! -d {input.out}/star ]; then mkdir {input.out}/star; fi && "
+        "rm -rf {output.temps} && "
         "STAR --runThreadN {threads} --genomeDir {params.star_genome} "
         "--readFilesIn {input.R1} {input.R2} "
         "--outSAMtype BAM SortedByCoordinate "
@@ -44,100 +47,32 @@ rule alignment_star:
         "--readFilesCommand zcat "
         "--outSAMunmapped Within "
         "--outSAMattrRGline ID:4 LB:rnaseq-capture PL:ILLUMINA SM:20 PU:unit1 "
-        "--outTmpDir {input.out}/star/{wildcards.sample}_tmp "
+        "--outTmpDir {output.temps} "
         "--quantMode GeneCounts "
         "> {log.run_info} 2>&1 && "
         'echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}'
 
+
+# ----------------------
 rule index_bam:
     """
-    indexation des bam
+    Index BAM files using samtools
     """
+    version: TOOL_VERSIONS["samtools"]
     input:
-        bamg= FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam",
-        dir = FASTQ_DIR,
-        out = OUTPUT_REP
+        bam = rules.alignment_star.output.bam
     output:
-        baig=FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam.bai",
+        bai = FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam.bai"
     conda:
-        "../envs/comptage_env.yml"
-    benchmark:
-        "benchmarks/alignement/{sample}_bai.tsv"
-    version: # pour récupérer la version de l'outil avec une commande shell
-        subprocess.getoutput(
-            "samtools --version | "
-            "head -1 | "
-            "cut -d' ' -f2"
-        )
+        PIPELINE_DIR + "/envs/comptage_env.yml"
     log:
-        run_info = "logs/index/{sample}/log.txt",
-        time = "logs/index/{sample}/time.txt"
-    threads:8
-    resources:
-        single_job=2
+        run_info = "log/samtools/{sample}/index.log",
+        time = "log/samtools/{sample}/index_time.txt"
+    threads: 4
     shell:
-        'echo "start : $(date +"%d-%m-%y   %T")" > {log.time} && '
-
-        "samtools index -b {input.bamg} && "
-        'echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}'
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        """
+        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
+        samtools index -b {input.bam} > {log.run_info} 2>&1
+        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        """
 

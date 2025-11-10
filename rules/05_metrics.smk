@@ -1,41 +1,39 @@
-# ../rules/05_metrics.smk
 import os
 import subprocess
 
 SAMPLES_ID = [s[:7] for s in SAMPLES]
 
-# Expect ACTIVE_OUTRIDER, ACTIVE_FRASER, ACTIVE_PCA to be defined earlier (pipeline.smk or included file).
-# If not defined, fall back to SAMPLES_ID
-try:
-    ACTIVE_OUTRIDER
-except NameError:
-    ACTIVE_OUTRIDER = SAMPLES_ID
-try:
-    ACTIVE_FRASER
-except NameError:
-    ACTIVE_FRASER = SAMPLES_ID
-try:
-    ACTIVE_PCA
-except NameError:
-    ACTIVE_PCA = SAMPLES_ID
+# Fallback for active sample lists
+ACTIVE_OUTRIDER = ACTIVE_OUTRIDER if 'ACTIVE_OUTRIDER' in globals() else SAMPLES_ID
+ACTIVE_FRASER   = ACTIVE_FRASER   if 'ACTIVE_FRASER' in globals() else SAMPLES_ID
+ACTIVE_PCA      = ACTIVE_PCA      if 'ACTIVE_PCA' in globals() else SAMPLES_ID
 
+# ----------------------
+# TOOL VERSIONS
+# ----------------------
+TOOL_VERSIONS = {
+    "picard": subprocess.getoutput("picard MarkDuplicates --version 2>&1 | head -1"),
+    "samtools": subprocess.getoutput("samtools --version | head -1 | cut -d' ' -f2"),
+    "mosdepth": subprocess.getoutput("mosdepth --version 2>&1 | head -1 | cut -d' ' -f3"),
+    "multiqc": subprocess.getoutput("multiqc --version | head -1 | cut -d' ' -f2"),
+    "python": subprocess.getoutput("python --version | cut -d' ' -f2"),
+}
 
+# --------------------------
+# markDuplicate
+# --------------------------
 rule markDuplicate:
-    """
-    Marquage des duplicats
-    """
     input:
-        aln = FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam",
+        aln = rules.alignment_star.output.bam,
         dir = FASTQ_DIR,
         out = OUTPUT_REP
     output:
         bam = temp(FASTQ_DIR + "/../pipeline_v0/dup/{sample}/{sample}_dup.bam"),
-        txt = FASTQ_DIR + "/../pipeline_v0/dup/{sample}/{sample}_dup.txt"
+        txt = FASTQ_DIR + "/../pipeline_v0/dup/{sample}/{sample}_dup.txt",
     conda:
         PIPELINE_DIR + "/envs/mark_env.yml"
-    version:
-        # Use picard to get a version string if available
-        subprocess.getoutput("picard MarkDuplicates --version 2>&1 | head -1")
+    version: TOOL_VERSIONS["picard"]
+    threads: 8
     resources:
         single_job = 2,
         tmpdir = OUTPUT_REP + "/dup/tmp"
@@ -44,32 +42,27 @@ rule markDuplicate:
     log:
         run_info = "log/dup/{sample}/log.txt",
         time = "log/dup/{sample}/time.txt"
-    threads: 8
     shell:
         '''
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time} && \
-        mkdir -p {input.dir}/../pipeline_v0/dup/{wildcards.sample} && \
-        mkdir -p {input.out}/dup/{wildcards.sample} && \
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
         picard MarkDuplicates \
             INPUT={input.aln} \
-            OUTPUT={input.dir}/../pipeline_v0/dup/{wildcards.sample}/{wildcards.sample}_dup.bam \
-            METRICS_FILE={input.dir}/../pipeline_v0/dup/{wildcards.sample}/{wildcards.sample}_dup.txt \
+            OUTPUT={output.bam} \
+            METRICS_FILE={output.txt} \
             VALIDATION_STRINGENCY=LENIENT \
             REMOVE_DUPLICATES=false \
-            TMP_DIR={resources.tmpdir} > {log.run_info} 2>&1 && \
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+            TMP_DIR={resources.tmpdir} > {log.run_info} 2>&1 &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
         '''
 
-
+# --------------------------
+# volcano
+# --------------------------
 rule volcano:
-    """
-    Per-sample volcano plot from OUTRIDER per-sample results.
-    This rule is instantiated per {samples_id}.
-    """
     input:
         outrider = FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/{samples_id}.outrider.tab"
     output:
-        png = FASTQ_DIR + "/../pipeline_v0/outrider/plot/{samples_id}.volcano.png"
+        png = FASTQ_DIR + "/../pipeline_v0/outrider/plot/{samples_id}.volcano.png",
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
     params:
@@ -82,50 +75,46 @@ rule volcano:
     threads: 2
     shell:
         '''
-        mkdir -p $(dirname {output.png}) && \
-        python {params.scripts}/scripts/create_volcano.py {input.outrider} {output.png}
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
+        python {params.scripts}/scripts/create_volcano.py {input.outrider} {output.png} > {log.run_info} 2>&1 &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
         '''
 
-
+# --------------------------
+# boxplot
+# --------------------------
 rule boxplot:
-    """
-    Generate OUTRIDER boxplots comparing sample counts for the run and other samples.
-    This is a single aggregated job using ACTIVE_PCA samples as reference.
-    """
     input:
-        # list of outrider per-sample files for ACTIVE_PCA
         outrider = expand(
             FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/{samples_id}.outrider.tab",
-            samples_id = ACTIVE_PCA
+            samples_id = ACTIVE_OUTRIDER
         )
     output:
         box = FASTQ_DIR + "/../pipeline_v0/outrider/plot/boxplot.png",
-        filt = FASTQ_DIR + "/../pipeline_v0/outrider/plot/boxplot_filt.png"
+        filt = FASTQ_DIR + "/../pipeline_v0/outrider/plot/boxplot_filt.png",
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
+    params:
+        dir = FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/",
+        samples_id_str = ",".join(ACTIVE_OUTRIDER),
+        scripts = PIPELINE_DIR
+    threads: 2
     benchmark:
         "benchmarks/boxplot/boxplot.tsv"
     log:
         run_info = "log/boxplot/log.txt",
         time = "log/boxplot/time.txt"
-    params:
-        outrider_files = ",".join(expand(FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/{samples_id}.outrider.tab", samples_id = ACTIVE_PCA)),
-        dir = FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/",
-        samples_id_str = ",".join(ACTIVE_PCA),
-        scripts = PIPELINE_DIR
-    threads: 2
     shell:
         '''
-        mkdir -p $(dirname {output.box}) && \
-        python {params.scripts}/scripts/create_outrider_boxplots2.py {params.dir} {output.box} {output.filt} {params.samples_id_str}
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
+        python {params.scripts}/scripts/create_outrider_boxplots2.py {params.dir} {output.box} {output.filt} {params.samples_id_str} > {log.run_info} 2>&1 &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
         '''
 
-
+# --------------------------
+# fraser_boxplot
+# --------------------------
 rule fraser_boxplot:
-    """
-    Generate FRASER boxplots comparing sample counts for the run and other samples.
-    Aggregated single job using ACTIVE_FRASER list.
-    """
     input:
         fraser = expand(
             FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/{samples_id}.fraser.tab",
@@ -133,59 +122,59 @@ rule fraser_boxplot:
         )
     output:
         box = FASTQ_DIR + "/../pipeline_v0/fraser/plot/boxplot.png",
-        filt = FASTQ_DIR + "/../pipeline_v0/fraser/plot/boxplot_filt.png"
+        filt = FASTQ_DIR + "/../pipeline_v0/fraser/plot/boxplot_filt.png",
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
+    params:
+        dir = FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/",
+        samples_id_str = ",".join(ACTIVE_FRASER),
+        scripts = PIPELINE_DIR
+    threads: 2
     benchmark:
         "benchmarks/boxplot_fraser/boxplot.tsv"
     log:
         run_info = "log/boxplot_fraser/log.txt",
         time = "log/boxplot_fraser/time.txt"
-    params:
-        fraser_files = ",".join(expand(FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/{samples_id}.fraser.tab", samples_id = ACTIVE_FRASER)),
-        dir = FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/",
-        samples_id_str = ",".join(ACTIVE_FRASER),
-        scripts = PIPELINE_DIR
-    threads: 2
     shell:
         '''
-        mkdir -p $(dirname {output.box}) && \
-        python {params.scripts}/scripts/create_fraser_boxplots5.py {params.dir} {output.box} {output.filt} {params.samples_id_str}
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
+        python {params.scripts}/scripts/create_fraser_boxplots5.py {params.dir} {output.box} {output.filt} {params.samples_id_str} > {log.run_info} 2>&1 &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
         '''
 
-
+# --------------------------
+# rseqc
+# --------------------------
 rule rseqc:
-    """
-    distribution type
-    """
     input:
-        bam = FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam",
+        bam = rules.alignment_star.output.bam,
         dir = FASTQ_DIR,
         out = OUTPUT_REP
     output:
-        FASTQ_DIR + "/../pipeline_v0/rseqc/{sample}/{sample}.rseqc.results"
+        FASTQ_DIR + "/../pipeline_v0/rseqc/{sample}/{sample}.rseqc.results",
     params:
         bed = RSEQ_BED
-    resources:
-        single_job = 2
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
+    threads: 8
     benchmark:
         "benchmarks/rseqc/{sample}.tsv"
     log:
         run_info = "log/rseqc/{sample}/log.txt",
         time = "log/rseqc/{sample}/time.txt"
-    threads: 8
     shell:
-        'read_distribution.py -i {input.bam} -r {params.bed} > {output}'
+        '''
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
+        read_distribution.py -i {input.bam} -r {params.bed} > {output} 2> {log.run_info} &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
+        '''
 
-
+# --------------------------
+# bam_stats
+# --------------------------
 rule bam_stats:
-    """
-    Generate coverage/stats files per sample.
-    """
     input:
-        bam = FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam",
+        bam = rules.alignment_star.output.bam,
         bai = FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam.bai",
         dir = FASTQ_DIR,
         out = OUTPUT_REP
@@ -194,7 +183,7 @@ rule bam_stats:
         padded = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_padded.txt",
         stats = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_stats.txt",
         hist = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_hist.txt",
-        mos = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}.mosdepth.global.dist.txt"
+        mos = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}.mosdepth.global.dist.txt",
     params:
         bed = BED,
         padded_bed = PADDED,
@@ -206,60 +195,61 @@ rule bam_stats:
         single_job = 16,
         tmpdir = OUTPUT_REP + "/coverage/tmp",
         mem_gb = 500
-    version:
-        subprocess.getoutput("samtools --version | head -1 | cut -d' ' -f2")
+    version: TOOL_VERSIONS["samtools"]
     log:
         on_target = "log/{sample}/stats_on_target.log",
         padded = "log/{sample}/stats_padded.log",
         hist = "log/{sample}/stats_hist.log",
-        insert_size = "log/{sample}/stats_insert_size.log"
+        insert_size = "log/{sample}/stats_insert_size.log",
+        time = "log/coverage/{sample}/time.txt"
     benchmark:
         "benchmarks/sam_stats/{sample}.tsv"
-    message:
-        "--------- stats : {wildcards.sample} ---------"
     shell:
         r"""
-        mkdir -p {input.dir}/../pipeline_v0/coverage/{wildcards.sample} && \
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
         samtools view {input.bam} -b -@ {threads} -F 260 | \
-        tee >(bedtools intersect -bed -u -abam stdin -b {params.bed} | wc -l > {input.dir}/../pipeline_v0/coverage/{wildcards.sample}/{wildcards.sample}_on_target.txt 2>>{log.on_target}) \
-            >(bedtools intersect -bed -u -abam stdin -b {params.padded_bed} | wc -l > {input.dir}/../pipeline_v0/coverage/{wildcards.sample}/{wildcards.sample}_padded.txt 2>>{log.padded}) \
-            >(bedtools coverage -hist -abam stdin -b {params.bed} | grep all > {input.dir}/../pipeline_v0/coverage/{wildcards.sample}/{wildcards.sample}_hist.txt 2>>{log.hist}) \
-        1>/dev/null && \
-        samtools stats -F 4 -@ {threads} {input.bam} > {input.dir}/../pipeline_v0/coverage/{wildcards.sample}/{wildcards.sample}_stats.txt 2>>{log.insert_size} && \
-        mosdepth --by {params.DI_bed} --threads 8 --thresholds 1,10,20,30 {input.dir}/../pipeline_v0/coverage/{wildcards.sample}/{wildcards.sample} {input.bam}
+        tee >(bedtools intersect -bed -u -abam stdin -b {params.bed} | wc -l > {output.on_target} 2>>{log.on_target}) \
+            >(bedtools intersect -bed -u -abam stdin -b {params.padded_bed} | wc -l > {output.padded} 2>>{log.padded}) \
+            >(bedtools coverage -hist -abam stdin -b {params.bed} | grep all > {output.hist} 2>>{log.hist}) \
+        1>/dev/null &&
+        samtools stats -F 4 -@ {threads} {input.bam} > {output.stats} 2>>{log.insert_size} &&
+        mosdepth --by {params.DI_bed} --threads {threads} --thresholds 1,10,20,30 {input.dir}/../pipeline_v0/coverage/{wildcards.sample}/{wildcards.sample} {input.bam} &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
         """
-
-
+# --------------------------
+# multiqc
+# --------------------------
 rule multiqc:
-    """
-    multiqc
-    """
     input:
-        bam = expand(FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam", sample=SAMPLES),
+        bam = expand(rules.alignment_star.output.bam, sample=SAMPLES),
         mark = expand(rules.markDuplicate.output.bam, sample=SAMPLES),
         dir = FASTQ_DIR
     output:
         html = FASTQ_DIR + "/../pipeline_v0/multiqc/multiqc_report.html",
-        data = directory(FASTQ_DIR + "/../pipeline_v0/multiqc/multiqc_data")
+        data = directory(FASTQ_DIR + "/../pipeline_v0/multiqc/multiqc_data"),
     params:
         bed = RSEQ_BED
-    resources:
-        single_job = 4
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
+    threads: 8
+    resources:
+        single_job = 4
     benchmark:
         "benchmarks/multiqc/multiqc.tsv"
     log:
         run_info = "log/multiqc/log.txt",
         time = "log/multiqc/time.txt"
-    threads: 8
     shell:
-        """
-        export TMPDIR={input.dir}/tmp && \
-        multiqc --force {input.dir}/../pipeline_v0 -o {FASTQ_DIR}/../pipeline_v0/multiqc
-        """
+        '''
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
+        export TMPDIR={input.dir}/tmp &&
+        multiqc --force {input.dir}/../pipeline_v0 -o {FASTQ_DIR}/../pipeline_v0/multiqc > {log.run_info} 2>&1 &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
+        '''
 
-
+# --------------------------
+# generate_and_run_param_notebook (PCA)
+# --------------------------
 RUN_NAME = os.path.basename(OUTPUT_REP)
 rule generate_and_run_param_notebook:
     input:
@@ -267,7 +257,7 @@ rule generate_and_run_param_notebook:
         mapping_file = GTF,
         blacklist  = PCA_blacklist
     output:
-        executed_nb = FASTQ_DIR + f"/../pipeline_v0/notebooks/notebook_pca_{RUN_NAME}.ipynb"
+        executed_nb = FASTQ_DIR + f"/../pipeline_v0/notebooks/notebook_pca_{RUN_NAME}.ipynb",
     params:
         samples_run  = RUN_NAME,
         excluded_run = "20231122_RUN17_NextSeq_Mid_8RNASEQ",
@@ -276,8 +266,12 @@ rule generate_and_run_param_notebook:
         scripts = PIPELINE_DIR
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
+    log:
+        run_info = f"log/notebook/log_{RUN_NAME}.txt",
+        time = f"log/notebook/time_{RUN_NAME}.txt"
     shell:
-        """
+        '''
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
         python {params.scripts}/scripts/generate_pca_notebook.py \
             --base {input.runs_folder} \
             --mapping_file {input.mapping_file} \
@@ -286,29 +280,38 @@ rule generate_and_run_param_notebook:
             --excluded_run {params.excluded_run} \
             --keyword {params.keyword} \
             --output_html {params.output_html} \
-            --notebook_path {output.executed_nb}
+            --notebook_path {output.executed_nb} > {log.run_info} 2>&1 &&
+        jupyter nbconvert --to notebook --execute --inplace {output.executed_nb} >> {log.run_info} 2>&1 &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
+        '''
 
-        jupyter nbconvert --to notebook --execute --inplace {output.executed_nb}
-        """
-
-
+# --------------------------
+# generate_metrics
+# --------------------------
 rule generate_metrics:
-    """
-    Aggregate QC metrics for the run.
-    """
     input:
         run_dir = os.path.dirname(FASTQ_DIR),
-        tpm = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/marice_gene_tpm_gene.tsv",
+        tpm = rules.matrix_tpm.output.gene_gene,
         fraser = expand(FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/{samples_id}.fraser.tab", samples_id = ACTIVE_FRASER),
         outrider = expand(FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/{samples_id}.outrider.tab", samples_id = ACTIVE_OUTRIDER)
     output:
-        metrics = FASTQ_DIR + "/../pipeline_v0/metrics/qc_summary.tsv"
+        metrics = FASTQ_DIR + "/../pipeline_v0/metrics/qc_summary.tsv",
     params:
-        scripts = PIPELINE_DIR
+        scripts = PIPELINE_DIR,
+        di_file = PANELAPP
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
+    log:
+        run_info = "log/metrics/log.txt",
+        time = "log/metrics/time.txt"
     shell:
-        """
-        python {params.scripts}/scripts/script_recup_metrics.py --run_path {input.run_dir} --tpm_file {input.tpm} --output {output.metrics}
-        """
+        '''
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
+        python {params.scripts}/scripts/recup_metrics.py \
+            --run_path {input.run_dir} \
+            --tpm_file {input.tpm} \
+            --di {params.di_file} \
+            --output {output.metrics} > {log.run_info} 2>&1 &&
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
+        '''
 
