@@ -179,6 +179,25 @@ df_pca['SampleShort'] = df_pca['Sample'].str.split(r'[-_]').str[0].str[:7]
 """))
 
 # =========================
+# 9b) Identify top contributing genes to PC1
+# =========================
+nb.cells.append(nbf.v4.new_code_cell("""
+# Loadings: how much each gene contributes to each PC
+loadings = pd.DataFrame(
+    pca.components_.T,
+    index=df_expr_t.columns,
+    columns=[f'PC{i+1}' for i in range(pca.n_components)]
+)
+
+# Sort by absolute loading for PC1
+top_genes_pc1 = loadings['PC1'].abs().sort_values(ascending=False).head(10)
+top_genes_pc1_df = loadings.loc[top_genes_pc1.index, ['PC1']].copy()
+top_genes_pc1_df['abs_loading'] = top_genes_pc1
+print("Top 10 genes influencing PC1:")
+display(top_genes_pc1_df)
+"""))
+
+# =========================
 # 10) Assign colors
 # =========================
 nb.cells.append(nbf.v4.new_code_cell("""

@@ -79,7 +79,7 @@ mat <- bind_cols(dfList)
 #mat<-mat[,-1]
 print(head(mat))
 # Return the gene-level counts or save them to a file
-write.table(mat, file = paste0(root_dir, "/marice_gene_tpm.tsv"), sep = "\t", quote = FALSE,col.names=NA)
+write.table(mat, file = paste0(root_dir, "/matrice_gene_tpm.tsv"), sep = "\t", quote = FALSE,col.names=NA)
 
 
 
@@ -97,5 +97,5 @@ rownames_mat <-row.names(mat)
    matriceTPM2 <- mat_bind
    colnames(matriceTPM2) <- gsub("^X", "", colnames(matriceTPM2))
    #print(head(mat_bind))
-   write.table(matriceTPM2, file = paste0(root_dir, "/marice_gene_tpm_gene.tsv"), sep = "\t", quote = FALSE, col.names=NA)
+   write.table(matriceTPM2, file = paste0(root_dir, "/matrice_gene_tpm_gene.tsv"), sep = "\t", quote = FALSE, col.names=NA)
 
