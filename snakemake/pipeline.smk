@@ -17,6 +17,7 @@ from time import strftime, localtime
 ## 
 ##--------------------------------------------------------------------------------------##
 
+
 ##--------------------------------------------------------------------------------------##
 ## Declaration des constantes
 ##--------------------------------------------------------------------------------------##
@@ -47,6 +48,58 @@ MATRICES = config["matrices"]
 TPM = config["matrice_tpm"]
 run_annot_sake = config["run_annot_sake"]
 
+
+def get_version_from_env(env_yml, cmd):
+    """
+    Detect a tool version by searching for its binary inside the local conda_env folder.
+    """
+    import subprocess
+    from pathlib import Path
+
+    print(f"[DEBUG] get_version_from_env called with: {env_yml}, {cmd}")
+    bin_name = cmd.split()[0]
+
+    # 🔧 Ensure PIPELINE_DIR is a Path, even if it's a string globally
+    base_dir = Path(PIPELINE_DIR) / "conda_env"
+    print(f"[DEBUG] Searching envs in {base_dir}")
+
+    found_binary = None
+
+    # Recursively look for binary under all conda_env subdirectories
+    for env_dir in sorted(base_dir.glob("*")):
+        if not env_dir.is_dir():
+            continue
+        for binary in env_dir.glob(f"**/bin/{bin_name}"):
+            if binary.exists():
+                print(f"[DEBUG] ✅ Found binary {binary}")
+                found_binary = binary
+                break
+        if found_binary:
+            break
+
+    if not found_binary:
+        print(f"[WARN] ❌ Could not find {bin_name} in any conda_env directory")
+        return f"{bin_name}: not found"
+
+    # Run the version command, capturing both stdout and stderr
+    try:
+        result = subprocess.run(
+            f"{found_binary} {cmd[len(bin_name):]}",
+            shell=True,
+            check=True,
+            capture_output=True,
+            text=True,
+            executable="/bin/bash"
+        )
+        output = (result.stdout + result.stderr).strip()
+        version = output.split("\n")[0]
+        print(f"[DEBUG] ✅ {bin_name} version detected: {version}")
+        return version if version else f"{bin_name}: version not found"
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Failed to run {cmd} in {found_binary}: {e}")
+        return f"/bin/sh: 1: {bin_name}: not found"
+
+
 # Set environment variables
 #os.environ["CONDARC"] = OUTPUT_REP + ".condarc"
 
@@ -55,6 +108,7 @@ include: '../rules/02_alignement.smk'
 include: '../rules/03_comptage.smk'
 include: '../rules/04_outrider_fraser.smk'
 include: '../rules/05_metrics.smk'
+include: '../rules/06_versions.smk'
 
 workdir: OUTPUT_REP
 
@@ -76,7 +130,6 @@ ACTIVE_FRASER = active_samples(fraser_blacklist)
 ACTIVE_OUTRIDER = active_samples(outrider_blacklist)
 ACTIVE_PCA = active_samples(PCA_blacklist)
 
-
 rule all:
     input:
         expand(FASTQ_DIR+"/{sample}_R1.fastq.gz",sample=SAMPLES),
@@ -86,8 +139,8 @@ rule all:
         expand(rules.fastp.output.R1, sample=SAMPLES),
         expand(rules.fastp.output.R2, sample=SAMPLES),
         expand(rules.fastqc_trim_report.output, sample=SAMPLES),
-        expand(rules.alignment_star.output.bamg, sample=SAMPLES),
-        expand(rules.index_bam.output.baig, sample=SAMPLES),
+        expand(rules.alignment_star.output.bam, sample=SAMPLES),
+        expand(rules.index_bam.output.bai, sample=SAMPLES),
         expand(rules.htseq_gene.output.gene, sample=SAMPLES),
         expand(rules.matrix.output, sample=SAMPLES),
         expand(rules.matrix_tpm.output.gene, sample=SAMPLES),
@@ -104,13 +157,68 @@ rule all:
         expand(rules.volcano.output, samples_id=ACTIVE_PCA),
         expand(rules.boxplot.output.filt, samples_id=ACTIVE_PCA),
         rules.generate_and_run_param_notebook.output.executed_nb,
-        rules.generate_metrics.output.metrics
+        rules.generate_metrics.output.metrics,
+        "benchmarks/versions/pipeline_versions.tsv"
 
 
 
-#addresses = ["laura.dosoutoferreira@chu-nantes.fr"]
+addresses = ["laura.dosoutoferreira@chu-nantes.fr"]
 #t = "ERREUR ROUTINE !"
-
+#
 #onerror:
- #   for mail in addresses :
-  #      shell('mail -s "an error occurred" {mail} ')
+#    for mail in addresses :
+#        shell('mail -s "an error occurred" {mail} ')
+#
+#onsuccess:
+#    for mail in addresses:
+#        shell(f'mail -s "Pipeline completed successfully" {mail} <<< "The Snakemake pipeline finished without errors."')
+
+addresses = ["laura.dosoutoferreira@chu-nantes.fr"]
+
+import smtplib
+from email.mime.text import MIMEText
+from datetime import datetime
+
+# -----------------------------
+# CONFIGURATION
+# -----------------------------
+SMTP_HOST =   "172.27.162.183"
+SMTP_PORT = 25  
+
+FROM = "laura.dosoutoferreira@chu-nantes.fr"  
+TO = ["laura.dosoutoferreira@chu-nantes.fr"]   
+
+# -----------------------------
+# EMAIL FUNCTION
+# -----------------------------
+def send_email(subject, body):
+    try:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = FROM
+        msg["To"] = ", ".join(TO)
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.send_message(msg)
+
+        print(f"[INFO] Email sent to {TO} from {FROM}")
+    except Exception as e:
+        print(f"[WARN] Could not send email: {e}")
+
+# -----------------------------
+# envoie mail
+# -----------------------------
+onsuccess:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    send_email(
+        subject="✅ Snakemake pipeline completed successfully",
+        body=f"The pipeline finished successfully at {now}.\nAll rules completed without errors."
+    )
+
+onerror:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    send_email(
+        subject="❌ Snakemake pipeline failed",
+        body=f"An error occurred during the pipeline at {now}.\nCheck the logs for details."
+    )
+
