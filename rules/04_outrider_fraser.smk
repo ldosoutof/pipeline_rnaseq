@@ -26,6 +26,7 @@ TOOL_VERSIONS = {
     "python": subprocess.getoutput("python --version | cut -d' ' -f2"),
 }
 
+
 # --------------------------
 # OUTRIDER main rule
 # --------------------------
@@ -34,18 +35,10 @@ rule outrider:
     input:
         htseq_matrice = FASTQ_DIR + "/../pipeline_v0/htseq/matrice.txt"
     output:
-        out_file = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq.tab",
-        annot = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq_annot.tsv",
-        output_files_dir = directory(FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/"),
-        files = expand(FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/{samples_id}.outrider.tab", samples_id=ACTIVE_OUTRIDER),
+        out_file = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq.tab"
     conda:
         PIPELINE_DIR + "/envs/outrider_env.yml"
     params:
-        gtf = GTF,
-        panel = PANELAPP,
-        pli = PLI,
-        hpo = HPO,
-        pheno = PHENO,
         scripts = PIPELINE_DIR
     benchmark:
         "benchmarks/outrider/benchmark_outrider.tsv"
@@ -59,9 +52,46 @@ rule outrider:
         '''
         echo "start : $(date +"%d-%m-%y %T")" > {log.time}
         Rscript {params.scripts}/scripts/outrider_new.R {input.htseq_matrice} {output.out_file}
-        python {params.scripts}/scripts/annotation_outrider_v2_rare.py \
-            -i {output.out_file} -g {params.gtf} -d {params.panel} \
-            -p {params.pli} -o {params.pheno} -m {params.hpo} -f {output.annot}
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
+        '''
+
+# --------------------------
+# OUTRIDER annotation rule
+# --------------------------
+rule annotation_outrider:
+    version: TOOL_VERSIONS["OUTRIDER"]
+    input:
+        out_file = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq.tab",
+        fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser.tab"
+    output:
+        annot = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq_annot.tsv",
+        output_files_dir = directory(FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/"),
+        files = expand(
+            FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/{samples_id}.outrider.tab",
+            samples_id=ACTIVE_OUTRIDER
+        )
+    conda:
+        PIPELINE_DIR + "/envs/outrider_env.yml"
+    params:
+        gtf = GTF,
+        panel = PANELAPP,
+        pli = PLI,
+        hpo = HPO,
+        pheno = PHENO,
+        scripts = PIPELINE_DIR
+    log:
+        run_info = "log/outrider/log_annotation.txt",
+        time = "log/outrider/time_annotation.txt"
+    threads: 1
+    resources:
+        single_job = 4
+    shell:
+        '''
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time}
+        python {params.scripts}/scripts/annotation_outrider_hits_bis2.py \
+            -i {input.out_file} -g {params.gtf} -d {params.panel} \
+            -p {params.pli} -o {params.pheno} -m {params.hpo} \
+            -f {output.annot} --fraser {input.fraser}
         python {params.scripts}/scripts/outrider_1file.py \
             -i {output.annot} -b {output.output_files_dir}/
         echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
@@ -99,7 +129,7 @@ rule fraser_config:
         '''
 
 # --------------------------
-# FRASER main rule
+# FRASER main rule (core)
 # --------------------------
 rule fraser:
     version: TOOL_VERSIONS["FRASER"]
@@ -107,19 +137,10 @@ rule fraser:
         mat = MATRICES,
         config = FASTQ_DIR + "/../pipeline_v0/fraser/fraser_config.txt"
     output:
-        fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser.tab",
-        annot_fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser_annot.tsv",
-        files_dir = directory(FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/"),
-        files = expand(FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/{samples_id}.fraser.tab", samples_id=ACTIVE_FRASER),
+        fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser.tab"
     conda:
         PIPELINE_DIR + "/envs/fraser_env.yml"
     params:
-        blacklist = fraser_blacklist,
-        gtf = GTF,
-        panel = PANELAPP,
-        pli = PLI,
-        hpo = HPO,
-        pheno = PHENO,
         dir = fraser_count,
         scripts = PIPELINE_DIR
     benchmark:
@@ -135,10 +156,93 @@ rule fraser:
         echo "start : $(date +"%d-%m-%y %T")" > {log.time}
         python {params.scripts}/scripts/backup_fraser_counts.py {params.dir}
         Rscript {params.scripts}/scripts/fraser.R {params.dir} {input.config} {output.fraser}
-        python {params.scripts}/scripts/annotation_test_fraser.py \
-            -f {output.fraser} -g {params.gtf} -d {params.panel} \
-            -p {params.pli} -m {params.hpo} -o {params.pheno} --output {output.annot_fraser}
-        python {params.scripts}/scripts/fraser_1file.py -i {output.annot_fraser} -b {output.files_dir}/
         echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
         '''
+
+# --------------------------
+# FRASER annotation rule
+# --------------------------
+rule annotation_fraser:
+    version: TOOL_VERSIONS["FRASER"]
+    input:
+        fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser.tab",
+        outrider = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq.tab"
+    output:
+        annot_fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser_annot.tsv",
+        files_dir = directory(FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/"),
+        files = expand(
+            FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/{samples_id}.fraser.tab",
+            samples_id=ACTIVE_FRASER
+        )
+    conda:
+        PIPELINE_DIR + "/envs/fraser_env.yml"
+    params:
+        blacklist = fraser_blacklist,
+        gtf = GTF,
+        panel = PANELAPP,
+        pli = PLI,
+        hpo = HPO,
+        pheno = PHENO,
+        scripts = PIPELINE_DIR
+    log:
+        run_info = "log/fraser/log_annotation_fraser.txt",
+        time = "log/fraser/time_annotation_fraser.txt"
+    threads: 1
+    resources:
+        single_job = 4
+    shell:
+        '''
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time}
+        python {params.scripts}/scripts/annotation_fraser_test4.py \
+            -f {input.fraser} -g {params.gtf} -d {params.panel} \
+            -p {params.pli} -m {params.hpo} -o {params.pheno} \
+            --outrider {input.outrider} --output {output.annot_fraser}
+        python {params.scripts}/scripts/fraser_1file.py \
+            -i {output.annot_fraser} -b {output.files_dir}/
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
+        '''
+
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
