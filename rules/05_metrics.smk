@@ -183,7 +183,7 @@ rule bam_stats:
         padded = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_padded.txt",
         stats = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_stats.txt",
         hist = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_hist.txt",
-        mos = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}.mosdepth.global.dist.txt",
+        #mos = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}.mosdepth.global.dist.txt",
     params:
         bed = BED,
         padded_bed = PADDED,
@@ -205,7 +205,7 @@ rule bam_stats:
     benchmark:
         "benchmarks/sam_stats/{sample}.tsv"
     shell:
-        r"""
+        """
         echo "start : $(date +"%d-%m-%y %T")" > {log.time} &&
         samtools view {input.bam} -b -@ {threads} -F 260 | \
         tee >(bedtools intersect -bed -u -abam stdin -b {params.bed} | wc -l > {output.on_target} 2>>{log.on_target}) \
@@ -213,7 +213,7 @@ rule bam_stats:
             >(bedtools coverage -hist -abam stdin -b {params.bed} | grep all > {output.hist} 2>>{log.hist}) \
         1>/dev/null &&
         samtools stats -F 4 -@ {threads} {input.bam} > {output.stats} 2>>{log.insert_size} &&
-        mosdepth --by {params.DI_bed} --threads {threads} --thresholds 1,10,20,30 {input.dir}/../pipeline_v0/coverage/{wildcards.sample}/{wildcards.sample} {input.bam} &&
+        #mosdepth --by {params.DI_bed} --threads {threads} --thresholds 1,10,20,30 {input.dir}/../pipeline_v0/coverage/{wildcards.sample}/{wildcards.sample} {input.bam} &&
         echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
         """
 # --------------------------
@@ -255,7 +255,8 @@ rule generate_and_run_param_notebook:
     input:
         runs_folder = RUNS_DIR,
         mapping_file = GTF,
-        blacklist  = PCA_blacklist
+        blacklist  = PCA_blacklist,
+        htseq = expand(rules.htseq_gene.output.gene, sample=SAMPLES), 
     output:
         executed_nb = FASTQ_DIR + f"/../pipeline_v0/notebooks/notebook_pca_{RUN_NAME}.ipynb",
     params:
