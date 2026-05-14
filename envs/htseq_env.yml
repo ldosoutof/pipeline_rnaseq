@@ -2,7 +2,7 @@ channels:
     - conda-forge
     - bioconda
 dependencies:
-    - htseq = 2.0.5
+    - htseq=2.0.5
     - r-base
     - r-dplyr 
     - r-purrr

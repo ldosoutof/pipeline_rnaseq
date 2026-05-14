@@ -1,0 +1,11 @@
+name: python_plot_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pandas
+  - matplotlib
+  - seaborn
+  - openpyxl
+  - tqdm
+

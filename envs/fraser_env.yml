@@ -4,7 +4,8 @@ channels:
 dependencies:
     - r-base
     - r-dplyr 
-    - bioconductor-fraser
+    - r-data.table
+    - bioconductor-fraser=2.2.0
     - python
     - pandas
     - openpyxl

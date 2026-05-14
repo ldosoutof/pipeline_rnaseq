@@ -3,8 +3,17 @@ channels:
           - bioconda
 dependencies:
           - python=3.9
-          - multiqc=1.19
-          - rseqc=5.0.3
+          - jupyter
+          - nbformat
+          - nbconvert
+          - pandas
+          - numpy
+          - seaborn
+          - adjustText
+          - scikit-learn
+          - plotly
+          - multiqc=1.28
+          - rseqc=5.0.4
           - r-base
           - r-dplyr
           - r-ggplot2

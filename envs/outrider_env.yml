@@ -4,11 +4,13 @@ channels:
 dependencies:
     - r-base
     - r-dplyr 
-    - bioconductor-outrider
+    - bioconductor-outrider=1.26.3
     - python
-    - openpyxl  
+    - openpyxl
     - pandas
     - pathlib
     - pyarrow
+    - numpy
+    - ncls
     - python-duckdb=0.10.1
     - polars=0.20.7      
