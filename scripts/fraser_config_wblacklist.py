@@ -5,7 +5,7 @@ import pandas as pd
 
 def generate_config_fraser(output_filename, pattern, blacklist_file=None):
     # Define the root directory
-    root_dir = '/datawork/genetique/RNASeq/diag/prod/'
+    root_dir = '/datawork2/genetique/RNASeq/diag/prod/'
     
     # Initialize group increment
     group_increment = 1

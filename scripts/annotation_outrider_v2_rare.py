@@ -33,7 +33,7 @@ hpo_subset = hpo[['database_id', 'disease_name']]
 
 
 # Load the Excel file (replace 'your_file.xlsx' with the actual file path)
-file_path = '/datawork/genetique/RNASeq/diag/prod/Results_LymphoRNA_Magnis_NS.xlsx'
+file_path = '/datawork2/genetique/RNASeq/diag/prod/Results_LymphoRNA_Magnis_NS.xlsx'
 
 # Read the Excel file into a pandas DataFrame
 df_magnis = pd.read_excel(file_path, engine='openpyxl')

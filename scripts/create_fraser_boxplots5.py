@@ -13,16 +13,17 @@ def read_fraser_files(directory: Path) -> pd.DataFrame:
     files = list(directory.glob("*.fraser.tab"))
     print("Detected files:", [str(f) for f in files])
     if not files:
-        raise FileNotFoundError("No .fraser.tab files found")
-
+        return pd.DataFrame()
     dfs = []
     for f in files:
         try:
-            dfs.append(pd.read_csv(f, sep="\t", dtype=str))
+            df = pd.read_csv(f, sep="\t", dtype=str)
+            if not df.empty:
+                dfs.append(df)
         except Exception as e:
             print(f"Error reading {f}: {e}")
     if not dfs:
-        raise FileNotFoundError("No valid .fraser.tab data read")
+        return pd.DataFrame()
     return pd.concat(dfs, ignore_index=True)
 
 
@@ -197,6 +198,14 @@ def main():
 
     # Read and preprocess data
     df = convert_columns(read_fraser_files(Path(args.directory)))
+
+    if df.empty:
+        print("[INFO] No FRASER events found — creating empty placeholder plots")
+        Path(args.output_png).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output_png).touch()
+        Path(args.output_png_filtered).touch()
+        return
+
     if "sampleID" not in df.columns:
         raise ValueError("Missing 'sampleID' column in input data.")
 

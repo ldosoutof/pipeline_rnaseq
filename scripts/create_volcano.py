@@ -42,8 +42,22 @@ def save_interactive_html(df, x, y, color, html_path, xlab, ylab, title):
 
 
 def main(outrider_file: str, output_png: str):
+    out1 = Path(output_png)
+    out1.parent.mkdir(parents=True, exist_ok=True)
+
     # ---------- Read & clean ----------
     df = pd.read_csv(outrider_file, sep="\t", dtype=str)
+
+    # Early exit for samples with no aberrant events (empty or header-only file)
+    if df.empty or len(df.columns) < 3:
+        print(f"[INFO] No aberrant events for {Path(outrider_file).stem} — skipping volcano plot")
+        # Create empty placeholder files so Snakemake output check passes
+        for path in [out1,
+                     out1.with_suffix(".html"),
+                     out1.with_name(out1.stem + "_fc.png"),
+                     out1.with_name(out1.stem + "_fc.html")]:
+            path.touch()
+        return
 
     # Numeric conversions (replace commas with dots first)
     for col in ["pValue", "zScore", "l2fc"]:

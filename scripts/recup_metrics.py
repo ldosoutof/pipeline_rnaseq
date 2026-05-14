@@ -89,7 +89,7 @@ for dup_file in dup_files:
     short_id = re.split('[-_]', sample_id)[0]
     # === OUTRIDER EVENT COUNT ===
     outrider_file = f"{run_path}/pipeline_v0/outrider/filesbysample/{short_id}.outrider.tab"
-    #outrider_file = f"/datawork/genetique/RNASeq/diag/prod/20250918_RUN40_NextSeq_High_15RNASEQ/pipeline_v0/outrider/filesbysample/{short_id}.outrider.tab"
+    #outrider_file = f"/datawork2/genetique/RNASeq/diag/prod/20250918_RUN40_NextSeq_High_15RNASEQ/pipeline_v0/outrider/filesbysample/{short_id}.outrider.tab"
     try:
         with open(outrider_file) as f:
             lines = f.readlines()
@@ -100,7 +100,7 @@ for dup_file in dup_files:
 
     # === FRASER EVENT COUNT ===
     fraser_file = f"{run_path}/pipeline_v0/fraser/filesbysample/{short_id}.fraser.tab"
-#    fraser_file = f"/datawork/genetique/RNASeq/diag/prod/20250918_RUN40_NextSeq_High_15RNASEQ/pipeline_v0/fraser/filesbysample/{short_id}.fraser.tab"
+#    fraser_file = f"/datawork2/genetique/RNASeq/diag/prod/20250918_RUN40_NextSeq_High_15RNASEQ/pipeline_v0/fraser/filesbysample/{short_id}.fraser.tab"
     try:
         with open(fraser_file) as f:
             lines = f.readlines()

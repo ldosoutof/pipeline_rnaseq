@@ -24,7 +24,7 @@ ods <- OutriderDataSet(se)
 ods <- filterExpression(ods, minCounts = TRUE, filterGenes = TRUE)
 ods <- OUTRIDER(ods)
 res <- results(ods, padjCutoff = NA, zScoreCutoff = 2, all = TRUE)
-
+res$sampleID <- sub("^X", "", res$sampleID)
 # ---------------- Save results ----------------
 write.table(res, file = output_file, sep = "\t", row.names = TRUE, col.names = NA)
 
