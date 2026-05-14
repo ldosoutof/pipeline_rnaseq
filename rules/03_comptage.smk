@@ -36,7 +36,9 @@ rule htseq_gene:
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
     params:
-        gtf=GTF
+        gtf=GTF,
+        log_start = lambda wc, input, threads: log_start("htseq_gene", wc, threads),
+        log_end   = LOG_END
     benchmark:
         "benchmarks/htseq/{sample}.tsv"
     log:
@@ -45,27 +47,31 @@ rule htseq_gene:
     threads: 2
     shell:
         """
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
+        set -euo pipefail
+        {params.log_start}
         htseq-count -s reverse -r pos -f bam {input.bamg} {params.gtf} -i gene_id \
-            > {output.gene}.tmp 2> {log.run_info}
-        sed -n '/^ENSG/,$p' {output.gene}.tmp > {output.gene} 2>&1 | tee -a {log.run_info}
+            > {output.gene}.tmp 2>> {log.run_info}
+        grep '^ENSG' {output.gene}.tmp > {output.gene}
         rm {output.gene}.tmp
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        {params.log_end}
         """
 
 rule matrix:
     """
-    Create gene count matrix for all samples, apply blacklist filtering, remove duplicates
+    Create gene count matrix aggregating ALL historical runs under PROD_ROOT.
+    Includes current run samples + all previous runs for robust OUTRIDER correction.
     """
     input:
-        htseq = expand(rules.htseq_gene.output.gene, sample=SAMPLES),
-        blacklist = outrider_blacklist,
-        base_dir = FASTQ_DIR + "/../.."
+        htseq    = expand(rules.htseq_gene.output.gene, sample=SAMPLES),
     output:
         matrix = FASTQ_DIR + "/../pipeline_v0/htseq/matrice.txt"
     params:
-        out_dir = FASTQ_DIR + "/../pipeline_v0/htseq",
-        scripts = PIPELINE_DIR
+        out_dir   = FASTQ_DIR + "/../pipeline_v0/htseq",
+        blacklist = outrider_blacklist,
+        prod_root = lambda wc: PROD_ROOT,
+        scripts   = PIPELINE_DIR,
+        log_start = lambda wc, input, threads: log_start("matrix", wc, threads),
+        log_end   = LOG_END
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
     log:
@@ -74,9 +80,16 @@ rule matrix:
     threads: 8
     shell:
         """
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
-        python {params.scripts}/scripts/create_matrice_by_run.py {input.base_dir} {params.out_dir} {input.blacklist} >> {log.run_info} 2>&1
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        set -euo pipefail
+        {params.log_start}
+        BL="{params.blacklist}"
+        if [ ! -f "$BL" ]; then
+            mkdir -p "$(dirname "$BL")"
+            touch "$BL"
+        fi
+        python {params.scripts}/scripts/create_matrice_by_run.py \
+            {params.prod_root} {params.out_dir} "$BL" >> {log.run_info} 2>&1
+        {params.log_end}
         """
 
 rule kallistoBed:
@@ -94,7 +107,10 @@ rule kallistoBed:
     conda:
         PIPELINE_DIR + "/envs/count_env.yml"
     params:
-        index=KALLISTO_IDX
+        index=KALLISTO_IDX,
+        fastq_dir = FASTQ_DIR,
+        log_start = lambda wc, input, threads: log_start("kallistoBed", wc, threads),
+        log_end   = LOG_END
     benchmark:
         "benchmarks/kallisto_bed/{sample}.tsv"
     log:
@@ -103,10 +119,12 @@ rule kallistoBed:
     threads: 8
     shell:
         """
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
-        kallisto quant -t {threads} -i {params.index} --rf-stranded -o {input.dir}/../pipeline_v0/kallisto_bed/{wildcards.sample} \
-            {input.R1} {input.R2} > {log.run_info} 2>&1
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        set -euo pipefail
+        {params.log_start}
+        kallisto quant -t {threads} -i {params.index} --rf-stranded \
+            -o {params.fastq_dir}/../pipeline_v0/kallisto_bed/{wildcards.sample} \
+            {input.R1} {input.R2} >> {log.run_info} 2>&1
+        {params.log_end}
         """
 
 rule kallisto2gene:
@@ -121,7 +139,9 @@ rule kallisto2gene:
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
     params:
-        scripts = PIPELINE_DIR
+        scripts = PIPELINE_DIR,
+        log_start = lambda wc, input, threads: log_start("kallisto2gene", wc, threads),
+        log_end   = LOG_END
     log:
         run_info = "log/tx2gene/{sample}/log.txt",
         time = "log/tx2gene/{sample}/time.txt"
@@ -130,9 +150,10 @@ rule kallisto2gene:
     threads: 8
     shell:
         """
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
-        Rscript {params.scripts}/scripts/tx2gene.R {input.h5}
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        set -euo pipefail
+        {params.log_start}
+        Rscript {params.scripts}/scripts/tx2gene.R {input.h5} >> {log.run_info} 2>&1
+        {params.log_end}
         """
 
 rule matrix_tpm:
@@ -151,7 +172,9 @@ rule matrix_tpm:
     params:
         scripts = PIPELINE_DIR,
         matrix_dir = TPM,
-        gtf = GTF
+        gtf = GTF,
+        log_start = lambda wc, input, threads: log_start("matrix_tpm", wc, threads),
+        log_end   = LOG_END
     log:
         run_info = "log/matrixtpm/log.txt",
         time = "log/matrixtpm/time.txt"
@@ -160,7 +183,9 @@ rule matrix_tpm:
     threads: 8
     shell:
         """
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
-        Rscript {params.scripts}/scripts/create_matrice_tpm_gene_by_run.R {input.dir}/../ {params.matrix_dir}/ {params.gtf}
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        set -euo pipefail
+        {params.log_start}
+        Rscript {params.scripts}/scripts/create_matrice_tpm_gene_by_run.R \
+            FASTQ_DIR/../ {params.matrix_dir}/ {params.gtf} >> {log.run_info} 2>&1
+        {params.log_end}
         """

@@ -25,11 +25,15 @@ rule fastqc_report:
         run_info = "log/fastqc/{sample}/log.txt",
         time = "log/fastqc/{sample}/time.txt"
     threads: 8
+    params:
+        log_start = lambda wc, input, threads: log_start("fastqc_report", wc, threads),
+        log_end   = LOG_END
     shell:
         """
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
-        fastqc -o {output.report_dir} -t {threads} {input.R1} {input.R2} > {log.run_info} 2>&1
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        set -euo pipefail
+        {params.log_start}
+        fastqc -o {output.report_dir} -t {threads} {input.R1} {input.R2} >> {log.run_info} 2>&1
+        {params.log_end}
         """
 
 # ----------------------
@@ -50,7 +54,9 @@ rule fastp:
         cut_right_size = 10,
         cut_right_mean_quality = 15,
         qualified_quality_phred = 15,
-        minimum_read_length = 30
+        minimum_read_length = 30,
+        log_start = lambda wc, input, threads: log_start("fastp", wc, threads),
+        log_end   = LOG_END
     threads: 2
     conda:
         PIPELINE_DIR + "/envs/fastp_env.yml"
@@ -59,7 +65,8 @@ rule fastp:
         time = "log/fastp/{sample}/fastp_time.txt"
     shell:
         """
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
+        set -euo pipefail
+        {params.log_start}
         fastp \
             -i {input.R1} \
             -I {input.R2} \
@@ -76,8 +83,8 @@ rule fastp:
             --qualified_quality_phred {params.qualified_quality_phred} \
             -h {output.html} \
             -j {output.json} \
-            > {log.run_info} 2>&1
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+            >> {log.run_info} 2>&1
+        {params.log_end}
         """
 
 # ----------------------
@@ -99,10 +106,14 @@ rule fastqc_trim_report:
         run_info = "log/fastqc_trim/{sample}/log.txt",
         time = "log/fastqc_trim/{sample}/time.txt"
     threads: 8
+    params:
+        log_start = lambda wc, input, threads: log_start("fastqc_trim_report", wc, threads),
+        log_end   = LOG_END
     shell:
         """
-        echo "start : $(date +"%d-%m-%y   %T")" > {log.time}
-        fastqc -o {output.report_dir} -t {threads} {input.R1} {input.R2} > {log.run_info} 2>&1
-        echo "end : $(date +"%d-%m-%y   %T")" >> {log.time}
+        set -euo pipefail
+        {params.log_start}
+        fastqc -o {output.report_dir} -t {threads} {input.R1} {input.R2} >> {log.run_info} 2>&1
+        {params.log_end}
         """
 

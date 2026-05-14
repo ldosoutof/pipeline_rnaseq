@@ -3,8 +3,8 @@ rule mean_chrY_expression:
     Compute mean TPM of chrY lymphocyte genes (sex inference)
     """
     input:
-        matrix = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/matrice_gene_tpm_gene.tsv",
-        genes  = FASTQ_DIR + "/../../chrY_top10_lymphocyte_genes.txt"
+        matrix = FASTQ_DIR + "/../pipeline_v0/kallisto_bed/matrice_gene_tpm.tsv",
+        genes  = FASTQ_DIR + "/../chrY_top10_lymphocyte_genes.txt"
     output:
         tsv = FASTQ_DIR + "/../pipeline_v0/qc/chrY_mean_expression.tsv"
     conda:
@@ -15,170 +15,84 @@ rule mean_chrY_expression:
         Rscript {PIPELINE_DIR}/scripts/mean_chrY_expression.R \
             {input.matrix} {input.genes} {output.tsv}
         """
-rule deepvariant_chrX_WES:
-    """
-    Run DeepVariant on chrX using WES model and capture BED
-    """
-    input:
-        bam = FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam"
-        #bam = rules.alignment_star.output.bam
-    output:
-        vcf = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/{sample}_chrX.vcf.gz"
-    params:
-        ref = GENOME,
-        bed = "/dataref/bank/human/bed/SureSelect_V8/S33266340_Padded_wo_chr_onlyX.bed",
-        tmp = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/intermediate_results_dir",
-        logs = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/logs",
-        image = "google/deepvariant:1.8.0"
-    threads: 16
-    log:
-        "log/deepvariant_WES/{sample}/run.log"
-    shell:
-        r"""
-        mkdir -p $(dirname {output.vcf}) {params.tmp} {params.logs}
-
-        echo "Cabaret2026!" | sudo -S docker run \
-          -v /datawork2:/datawork2 \
-          -v /dataref:/dataref \
-          -w /datawork \
-          {params.image} \
-          run_deepvariant \
-            --model_type=WES \
-            --ref={params.ref} \
-            --reads={input.bam} \
-            --output_vcf={output.vcf} \
-            --num_shards={threads} \
-            --regions={params.bed} \
-            --intermediate_results_dir={params.tmp} \
-            --logging_dir={params.logs} \
-            --make_examples_extra_args="channels='',split_skip_reads=true" \
-          > {log} 2>&1
-        """
-rule bgzip_and_index_vcf:
-    """
-    Ensure DeepVariant VCF is bgzip-compressed and indexed
-    """
-    input:
-        vcf = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/{sample}_chrX.vcf.gz"
-    output:
-        vcf = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/{sample}_chrX.bgz.vcf.gz",
-        tbi = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/{sample}_chrX.bgz.vcf.gz.tbi"
-    conda:
-        PIPELINE_DIR + "/envs/bcftools_env.yml"
-    shell:
-        """
-        gunzip -c {input.vcf} | bgzip -c > {output.vcf}
-        tabix -f -p vcf {output.vcf}
-        """
-rule annotate_chrX_population:
-    """
-    Annotate chrX VCF with 1000G rsID and gnomAD AF
-    """
-    input:
-        vcf = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/{sample}_chrX.bgz.vcf.gz"
-    output:
-        vcf = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/{sample}_chrX_annot.vcf.gz",
-        tbi = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/{sample}_chrX_annot.vcf.gz.tbi"
-    params:
-        tmp = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/tmp_annot.vcf.gz",
-        g1000 = "/dataref/bank/human/annotation/GRCh38/1000G/ALL.chrX.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz",
-        gnomad = "/dataref/bank/human/annotation/GRCh38/gnomad/gnomad.genomes.v3.1.2.sites.chrX.vcf.bgz"
-    conda:
-        PIPELINE_DIR + "/envs/bcftools_env.yml"
-    log:
-        "log/deepvariant/annotate/{sample}.log"
-    shell:
-        r"""
-        set -euo pipefail
-
-        echo "[INFO] Index annotation VCFs if needed"
-        bcftools index -f -t {params.g1000}
-        bcftools index -f -t {params.gnomad}
-
-        echo "[INFO] Step 1: add rsID from 1000G"
-        bcftools annotate \
-          -a {params.g1000} \
-          -c ID \
-          {input.vcf} \
-        | bgzip -c > {params.tmp}
-
-        bcftools index -t {params.tmp}
-
-        echo "[INFO] Step 2: add gnomAD AF"
-        bcftools annotate \
-          -a {params.gnomad} \
-          -c INFO/AF,INFO/AF_non_v2_XX \
-          -h <(cat <<'EOF'
-##INFO=<ID=gnomAD_AF,Number=A,Type=Float,Description="gnomAD allele frequency">
-##INFO=<ID=gnomAD_AF_XX,Number=A,Type=Float,Description="gnomAD allele frequency in XX samples">
-EOF
-          ) \
-          {params.tmp} \
-        | bgzip -c > {output.vcf}
-
-        bcftools index -t {output.vcf}
-
-        rm -f {params.tmp} {params.tmp}.tbi
-        """
-
-#rule annotate_chrX_population:
-#    """
-#    Annotate chrX VCF with 1000G rsID and gnomAD AF
-#    """
-#    input:
-#        vcf = rules.deepvariant_chrX_WES.output.vcf
-#    output:
-#        vcf = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/{sample}_chrX_annot.vcf.gz"
-#    conda:
-#        PIPELINE_DIR + "/envs/bcftools_env.yml"
-#    shell:
-#        """
-#        bcftools annotate \
-#          -a /dataref/bank/human/annotation/GRCh38/1000G/ALL.chrX.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz \
-#          -c ID \
-#          {input.vcf} | \
-#        bcftools annotate \
-#          -a /dataref/bank/human/annotation/GRCh38/gnomad/gnomad.genomes.v3.1.2.sites.chrX.vcf.bgz \
-#          -c INFO/AF \
-#          -Oz -o {output.vcf}
-#
-#        bcftools index {output.vcf}
-#        """
-rule vaf_table_chrX:
-    """
-    Extract PASS SNPs with DP>=20 into VAF table
-    """
-    input:
-        vcf = rules.annotate_chrX_population.output.vcf
-    output:
-        tsv = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/vaf_table.tsv"
-    conda:
-        PIPELINE_DIR + "/envs/bcftools_env.yml"
-    shell:
-        """
-        bcftools view -f PASS -v snps -i 'FORMAT/DP>=20' {input.vcf} | \
-        bcftools query -f '%CHROM\t%POS\t%REF\t%ALT\t[%DP]\t[%VAF]\n' \
-        > {output.tsv}
-        """
 rule vaf_violin_plot_run_females:
     """
     One violin plot per run, chrX VAF, females only
     """
     input:
         vaf_tables = expand(
-            FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/{sample}/vaf_table.tsv",
+            FASTQ_DIR + "/../pipeline_v0/deepvariant/{sample}/vaf_table.tsv",
             sample=SAMPLES
         ),
         sex = FASTQ_DIR + "/../pipeline_v0/qc/chrY_mean_expression.tsv"
     output:
-        plot = FASTQ_DIR + "/../pipeline_v0/deepvariant_WES/vaf_violin_chrX_females.png"
+        plot = FASTQ_DIR + "/../pipeline_v0/deepvariant/vaf_violin_chrX_females.png"
     conda:
         PIPELINE_DIR + "/envs/python_plot_env.yml"
     shell:
         """
         python {PIPELINE_DIR}/scripts/plot_vaf_violin_by_sample.py \
             {output.plot} \
-            {input.sex} \
             {input.vaf_tables}
         """
+rule deepvariant_vaf_plot:
+    """
+    Run DeepVariant (WES mode) using Docker, filter PASS SNPs with DP ≥ 20,
+    extract Variant Allele Frequencies (VAF), and plot chrX VAF scatter.
+    """
+    input:
+        ref = GENOME,
+        bam = FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam",
+        script = PIPELINE_DIR + "/scripts/plot_vaf.py"
+    output:
+        vcf = FASTQ_DIR + "/../pipeline_v0/deepvariant_chrX/{sample}.vcf.gz",
+        vcf_filtered = FASTQ_DIR + "/../pipeline_v0/deepvariant_chrX/snps_pass_dp20_{sample}.vcf.gz",
+        vaf_table = FASTQ_DIR + "/../pipeline_v0/deepvariant_chrX/vaf_table_{sample}.tsv",
+        plot = FASTQ_DIR + "/../pipeline_v0/deepvariant_chrX/vaf_chrX_{sample}_scatter.png"
+    params:
+        logs = FASTQ_DIR + "/../pipeline_v0/deepvariant_chrX/logs",
+        intermediate = FASTQ_DIR + "/../pipeline_v0/deepvariant_chrX/intermediate_results_dir_all",
+        outdir = FASTQ_DIR + "/../pipeline_v0/deepvariant_chrX",
+        docker_image = "google/deepvariant:1.8.0"
+    threads: 16
+    log:
+        run_info = "log/deepvariant/{sample}/log.txt",
+        time = "log/deepvariant/{sample}/time.txt"
+    version:
+        "DeepVariant 1.8.0 | bcftools 1.17 | matplotlib 3.8 | pandas 2.2"
+    conda:
+        PIPELINE_DIR + "/envs/deepvariant_env.yml"
+    shell:
+        r"""
+        echo "start : $(date +"%d-%m-%y %T")" > {log.time}
 
+        # Step 1: DeepVariant (Docker run)
+        sudo docker run \
+            -v /datawork:/datawork \
+            -v /dataref:/dataref \
+            -w /datawork \
+            {params.docker_image} \
+            run_deepvariant \
+                --model_type=WES \
+                --ref={input.ref} \
+                --reads={input.bam} \
+                --output_vcf={output.vcf} \
+                --num_shards={threads} \
+                --intermediate_results_dir={params.intermediate} \
+                --make_examples_extra_args="channels='',split_skip_reads=true" \
+                --logging_dir={params.logs} \
+            2>&1 | tee {params.outdir}/deepvariant_{wildcards.sample}.log
+
+        # Step 2: Filter SNPs (PASS, DP ≥ 20)
+        bcftools view -f PASS -v snps -i 'FORMAT/DP>=20' {output.vcf} -Oz -o {output.vcf_filtered}
+
+        # Step 3: Extract Variant Allele Frequencies (VAF)
+        bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%DP\t%AD]\n' {output.vcf_filtered} \
+            | awk 'BEGIN{{OFS="\t"}} {{split($6,a,","); if($5>0) print $1,$2,$3,$4,$5,a[2]/$5}}' \
+            > {output.vaf_table}
+
+        # Step 4: Plot chrX VAF scatter
+        python {input.script} {output.vaf_table} {output.plot} >> {log.run_info} 2>&1
+
+        echo "end : $(date +"%d-%m-%y %T")" >> {log.time}
+        """
