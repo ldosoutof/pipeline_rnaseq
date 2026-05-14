@@ -7,15 +7,19 @@ configuration:
 
 run_annot_sake: true
 
+# Pipeline output subdirectory name under each run folder (default: pipeline_v0)
+pipeline_output_dir: pipeline_v0
+
 # Paramètres indépendants du JOB
-di_bed: /dataref/bank/human/bed/DI.bed
-fraser_count: /datawork/genetique/RNASeq/diag/prod/Fraser2_2/
+di_bed: /dataref/bank/human/bed/DI_green_300425.tsv
+fraser_count: /datawork2/genetique/RNASeq/diag/prod/Fraser2_2/
+fraser_count_hyper: /datawork2/genetique/RNASeq/diag/prod/Fraser2_2_hyper/
 genome: /dataref/bank/human/genome/GRCh38/ensembl/Homo_sapiens.GRCh38.dna.primary_assembly.fa
 gtfFile: /dataref/bank/human/annotation/GRCh38/ensembl/current/Homo_sapiens.GRCh38.106.gtf
 hpo: /dataref/bank/human/annotation/GRCh38/hpo/phenotype.hpoa
 kallisto_idx: /dataref/bank/human/genome/GRCh38/kallisto/kallisto_bed/transcripts_bed.idx
-matrice_tpm: /datawork/genetique/RNASeq/diag/matrices_comptage_tpm_gene/
-matrices: /datawork/genetique/RNASeq/diag/matrices_comptage/
+matrice_tpm: /datawork2/genetique/RNASeq/diag/matrices_comptage_tpm_gene/
+matrices: /datawork2/genetique/RNASeq/diag/matrices_comptage/
 padded: /dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Padded_wo_chr.bed
 panelapp: /dataref/bank/human/annotation/GRCh38/current/DI_green.tsv
 pheno: /dataref/bank/human/annotation/GRCh38/hpo/genes_to_phenotype.txt
@@ -26,7 +30,28 @@ run_annot_sake: true
 star_folder: /dataref/bank/human/genome/GRCh38/STAR/
 star_genome: /dataref/bank/human/genome/GRCh38/STAR/
 bed: /dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Covered_wo_chr.bed
-outrider_blacklist: "/datawork/genetique/RNASeq/diag/prod/blacklist_outrider.txt"
-fraser_blacklist: "/datawork/genetique/RNASeq/diag/prod/blacklist_fraser.txt"
-pca_blacklist: "/datawork/genetique/RNASeq/diag/prod/blacklist_PCA.txt"
-runs_dir: "/datawork/genetique/RNASeq/diag/prod/"
+outrider_blacklist: "/datawork2/genetique/RNASeq/diag/prod/blacklist_outrider.txt"
+fraser_blacklist: "/datawork2/genetique/RNASeq/diag/prod/blacklist_fraser.txt"
+pca_blacklist: "/datawork2/genetique/RNASeq/diag/prod/blacklist_PCA.txt"
+runs_dir: "/datawork2/genetique/RNASeq/diag/prod/"
+
+# Keywords that identify blood RNA-seq samples eligible for FRASER
+# (space-separated, case-insensitive). Tissue samples are excluded.
+fraser_keywords: "MOINS PUROMINS"
+# URL of the Prometheus Pushgateway — set to empty string to disable pushing
+prometheus_gateway: "http://localhost:9091"
+
+# RefSeq GTF used by featureCounts (CDS counting)
+gtf_refseq: /dataref/bank/human/annotation/GRCh38/gencode/v49/gencode.v49.basic.annotation.woreadthrough.woretainedintron.nochr.gtf
+# Pre-built GeneID→ENSG mapping table (built once by build_geneid_map rule)
+geneid_map: /datawork2/genetique/RNASeq/diag/prod/geneid_to_ensg.tsv
+
+# --- Per-sample analysis / ZIP bundling (04_make_zip) -----------------------
+# gnomAD constraint table (v2 or v4 TSV)
+gnomad: /dataref/bank/human/annotation/GRCh38/gnomad/gnomad_v4_by_gene.tsv
+# Mendeliome JSON (Australia format)
+mendeliome: /dataref/bank/human/annotation/GRCh38/mendeliome/mendeliome_australia.json
+# Number of parallel workers for per-sample analysis (default: 4)
+# ANALYSIS_WORKERS: 4
+# Optional p-value filter applied before per-sample output (e.g. 0.05)
+# PVALUE_FILTER: 0.05

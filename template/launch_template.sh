@@ -21,8 +21,7 @@ echo "Launching pipeline"
 snakemake \
             -s  $snakefile \
                             --configfile $config_file \
-                                                --latency-wait 60 \                                                          
-					                    --resources mem_gb=400 \
+                                                --latency-wait 60 -c60 \
                                                                                                                             --restart-times 2 \
                                                                                                                                                         --rerun-incomplete \
                                                                                                                                                                                           --use-conda  --conda-prefix "$conda_prefix" --conda-frontend conda
