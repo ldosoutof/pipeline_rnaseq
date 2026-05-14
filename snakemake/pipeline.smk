@@ -3,6 +3,7 @@ from os.path import join
 import os
 import re
 import subprocess
+import sys
 from time import strftime, localtime
 
 #configfile: "config.yml"
@@ -22,7 +23,7 @@ from time import strftime, localtime
 ## Declaration des constantes
 ##--------------------------------------------------------------------------------------##
 
-RUNS_DIR = config['runs_dir']
+RUNS_DIR  = config['runs_dir'].rstrip("/")
 FASTQ_DIR = config['configuration']['fastq_dir']
 OUTPUT_REP = config['configuration']['outputDir']
 PIPELINE_DIR = config['configuration']['pipeline_dir']
@@ -34,7 +35,9 @@ HPO = config["hpo"]
 PHENO = config["pheno"]
 PLI = config["pli"]
 BED = config["bed"]
-fraser_count = config["fraser_count"]
+fraser_count       = config["fraser_count"]
+fraser_count_hyper = config.get("fraser_count_hyper",
+                                config["fraser_count"].rstrip("/") + "_hyper/")
 PCA_blacklist = config["pca_blacklist"]
 outrider_blacklist = config["outrider_blacklist"]
 fraser_blacklist = config["fraser_blacklist"]
@@ -47,6 +50,38 @@ GTF = config["gtfFile"]
 MATRICES = config["matrices"]
 TPM = config["matrice_tpm"]
 run_annot_sake = config["run_annot_sake"]
+
+# --- featureCounts / make_zip globals ----------------------------------------
+# PROD_ROOT  : root directory of all run folders (same as runs_dir)
+PROD_ROOT       = config["runs_dir"].rstrip("/")
+GTF_REFSEQ      = config.get("gtf_refseq", "")
+GTF_ENSEMBL     = config.get("gtfFile", GTF)     # reuse Ensembl GTF already loaded
+GENEID_MAP      = config.get("geneid_map", PROD_ROOT + "/geneid_to_ensg.tsv")
+GNOMAD          = config.get("gnomad", "")
+MENDELIOME      = config.get("mendeliome", "")
+
+# RUN_SAMPLE is built after SAMPLES_ID is defined — see below
+import glob as _glob
+
+def _build_run_sample(prod_root, samples_id):
+    """
+    Scan prod_root for aligned BAMs and return
+    [(run_tag, sample_id, bam_path), ...] for each active sample.
+    """
+    triples = []
+    pattern = os.path.join(prod_root, "20*", "pipeline_v0", "star",
+                           "*_Aligned.sortedByCoord.out.bam")
+    for bam in sorted(_glob.glob(pattern)):
+        parts = bam.split(os.sep)
+        run_tag = next((p for p in parts if p.startswith("20")), None)
+        if run_tag is None:
+            continue
+        basename = os.path.basename(bam)
+        sample_id = basename.split("-")[0] if "-" in basename else basename.split("_")[0]
+        if sample_id in samples_id:
+            triples.append((run_tag, sample_id, bam))
+    return triples
+
 
 
 def get_version_from_env(env_yml, cmd):
@@ -103,17 +138,48 @@ def get_version_from_env(env_yml, cmd):
 # Set environment variables
 #os.environ["CONDARC"] = OUTPUT_REP + ".condarc"
 
-include: '../rules/01_trim_fastqc.smk'
-include: '../rules/02_alignement.smk'
-include: '../rules/03_comptage.smk'
-include: '../rules/04_outrider_fraser.smk'
-include: '../rules/05_metrics.smk'
-include: '../rules/06_versions.smk'
-
-workdir: OUTPUT_REP
-
-
 SAMPLES_ID = [s[:7] for s in SAMPLES]
+
+# FRASER and OUTRIDER are only meaningful for blood RNA-seq
+FRASER_KEYWORDS = tuple(
+    kw.upper() for kw in
+    config.get("fraser_keywords", "MOINS PUROMINS").split()
+)
+
+# Try to detect blood samples from full sample names first.
+# If SAMPLES only contains short IDs (e.g. "26D0198"), fall back to
+# scanning FASTQ filenames to recover the full name with the suffix.
+def _get_full_sample_names(samples, fastq_dir):
+    """
+    If sample names already contain a keyword, use them as-is.
+    Otherwise scan fastq_dir for R1 files to recover full names.
+    """
+    import glob as _g
+    full = []
+    for s in samples:
+        if any(kw in s.upper() for kw in FRASER_KEYWORDS):
+            full.append(s)
+        else:
+            # look for <s>*_R1.fastq.gz in fastq_dir
+            pattern = os.path.join(fastq_dir, f"{s}*_R1.fastq.gz")
+            hits = _g.glob(pattern)
+            if hits:
+                # derive full name from filename: strip _R1.fastq.gz
+                fname = os.path.basename(hits[0])
+                full_name = fname.replace("_R1.fastq.gz", "")
+                full.append(full_name)
+            else:
+                full.append(s)  # keep as-is if not found
+    return full
+
+SAMPLES_FULL     = _get_full_sample_names(SAMPLES, FASTQ_DIR)
+SAMPLES_BLOOD    = [s for s in SAMPLES_FULL if any(kw in s.upper() for kw in FRASER_KEYWORDS)]
+SAMPLES_ID_BLOOD = [s[:7] for s in SAMPLES_BLOOD]
+
+print(f"[INFO] FRASER_KEYWORDS: {FRASER_KEYWORDS}", file=sys.stderr)
+print(f"[INFO] SAMPLES ({len(SAMPLES)}): {SAMPLES[:3]}...", file=sys.stderr)
+print(f"[INFO] SAMPLES_BLOOD ({len(SAMPLES_BLOOD)}): {SAMPLES_BLOOD[:3]}...", file=sys.stderr)
+print(f"[INFO] SAMPLES_ID_BLOOD ({len(SAMPLES_ID_BLOOD)}): {SAMPLES_ID_BLOOD[:3]}...", file=sys.stderr)
 
 def active_samples(blacklist_file, samples=SAMPLES_ID):
     """
@@ -126,40 +192,75 @@ def active_samples(blacklist_file, samples=SAMPLES_ID):
     else:
         excluded = set()
     return [s for s in samples if s not in excluded]
-ACTIVE_FRASER = active_samples(fraser_blacklist)
-ACTIVE_OUTRIDER = active_samples(outrider_blacklist)
-ACTIVE_PCA = active_samples(PCA_blacklist)
+
+ACTIVE_FRASER   = active_samples(fraser_blacklist,   samples=SAMPLES_ID_BLOOD)
+ACTIVE_OUTRIDER = active_samples(outrider_blacklist,  samples=SAMPLES_ID_BLOOD)
+ACTIVE_PCA      = active_samples(PCA_blacklist)
+
+include: '../rules/logging.smk'
+include: '../rules/01_trim_fastqc.smk'
+include: '../rules/02_alignement.smk'
+include: '../rules/03_comptage.smk'
+include: '../rules/03bis_featureCount.smk'
+include: '../rules/04_outrider_fraser.smk'
+include: '../rules/04_outrider_fraser_hyper.smk'
+include: '../rules/04_make_zip.smk'
+include: '../rules/05_metrics.smk'
+include: '../rules/06_versions.smk'
+include: '../rules/07_variantCalling_bis.smk'
+
+workdir: OUTPUT_REP
+
+# RUN_SAMPLE: built here, after SAMPLES_ID is available
+RUN_SAMPLE = _build_run_sample(PROD_ROOT, set(SAMPLES_ID))
 
 rule all:
     input:
         expand(FASTQ_DIR+"/{sample}_R1.fastq.gz",sample=SAMPLES),
         expand(FASTQ_DIR+"/{sample}_R2.fastq.gz",sample=SAMPLES),
-        expand(rules.fastqc_report.output, sample=SAMPLES),
-        expand(rules.fastp.output.html, sample=SAMPLES),
-        expand(rules.fastp.output.R1, sample=SAMPLES),
-        expand(rules.fastp.output.R2, sample=SAMPLES),
-        expand(rules.fastqc_trim_report.output, sample=SAMPLES),
-        expand(rules.alignment_star.output.bam, sample=SAMPLES),
-        expand(rules.index_bam.output.bai, sample=SAMPLES),
-        expand(rules.htseq_gene.output.gene, sample=SAMPLES),
-        expand(rules.matrix.output, sample=SAMPLES),
-        expand(rules.matrix_tpm.output.gene, sample=SAMPLES),
-        expand(rules.kallistoBed.output.h5, sample=SAMPLES),
-        expand(rules.kallisto2gene.output, sample=SAMPLES),
-        expand(rules.bam_stats.output.on_target, sample=SAMPLES),
-        expand(rules.rseqc.output, sample=SAMPLES),
-        expand(rules.multiqc.output, sample=SAMPLES), 
+        #expand(rules.fastqc_report.output, sample=SAMPLES),
+        #expand(rules.fastp.output.html, sample=SAMPLES),
+        #expand(rules.fastp.output.R1, sample=SAMPLES),
+        #expand(rules.fastp.output.R2, sample=SAMPLES),
+        #expand(rules.fastqc_trim_report.output, sample=SAMPLES),
+        #expand(rules.alignment_star.output.bam, sample=SAMPLES),
+        #expand(rules.index_bam.output.bai, sample=SAMPLES),
+        #expand(rules.htseq_gene.output.gene, sample=SAMPLES),
+        #expand(rules.matrix.output, sample=SAMPLES),
+        #expand(rules.matrix_tpm.output.gene, sample=SAMPLES),
+        #expand(rules.kallistoBed.output.h5, sample=SAMPLES),
+        #expand(rules.kallisto2gene.output, sample=SAMPLES),
+        #expand(rules.bam_stats.output.on_target, sample=SAMPLES),
+        #expand(rules.rseqc.output, sample=SAMPLES),
+        #expand(rules.multiqc.output, sample=SAMPLES), 
         expand(rules.outrider.output.out_file, sample=SAMPLES),
+        rules.annotation_outrider.output.annot,
         expand(rules.fraser_config.output, sample=SAMPLES),
         rules.fraser.output.fraser,
         expand(rules.fraser.output.fraser),
         expand(rules.fraser_boxplot.output.filt, samples_id=ACTIVE_FRASER),
-        expand(rules.volcano.output, samples_id=ACTIVE_PCA),
-        expand(rules.boxplot.output.filt, samples_id=ACTIVE_PCA),
+        expand(rules.volcano.output, samples_id=ACTIVE_OUTRIDER),
+        expand(rules.boxplot.output.filt, samples_id=ACTIVE_OUTRIDER),
+        # featureCounts (03bis) — one output per (run, sample) pair
+        [rules.featurecounts_gene.output.gene.format(run=r, sample=s)
+         for r, s, _ in RUN_SAMPLE],
+        [rules.map_refseq_to_ensembl.output.ensembl_counts.format(run=r, sample=s)
+         for r, s, _ in RUN_SAMPLE],
+        rules.matrix_featurecounts.output.matrix,
+        # hyper pipeline (outrider + fraser on featureCounts matrix)
+        rules.annotation_outrider_hyper.output.annot,
+        rules.annotation_fraser_hyper.output.annot_fraser,
+        rules.rnaseq_per_sample_hyper.output.zip_file,
+        # ZIP bundling + per-sample analysis (04_make_zip)
+        [rules.make_analysis_zip.output.zip.format(run=r)
+         for r in sorted({r for r, s, _ in RUN_SAMPLE})],
+        [rules.run_rnaseq_analysis.output.result_zip.format(run=r)
+         for r in sorted({r for r, s, _ in RUN_SAMPLE})],
         rules.generate_and_run_param_notebook.output.executed_nb,
         rules.generate_metrics.output.metrics,
-        "benchmarks/versions/pipeline_versions.tsv"
-
+        "benchmarks/versions/pipeline_versions.tsv",
+        rules.mean_chrY_expression.output.tsv,
+        rules.vaf_violin_plot_run_females.output.plot
 
 
 addresses = ["laura.dosoutoferreira@chu-nantes.fr"]
@@ -217,8 +318,30 @@ onsuccess:
 
 onerror:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    failures = collect_failed_logs(log_dir="log")
+    if failures:
+        details = []
+        for f in failures:
+            details.append(
+                f"Rule      : {f['rule']}\n"
+                f"Exit code : {f['exit_code']}\n"
+                f"Timestamp : {f['timestamp']}\n"
+                f"Log file  : {f['log_path']}\n"
+                f"--- last 30 lines ---\n{f['tail']}\n"
+            )
+        body = (
+            f"An error occurred during the pipeline at {now}.\n\n"
+            + "\n" + "="*60 + "\n"
+            + ("\n" + "="*60 + "\n").join(details)
+        )
+    else:
+        body = (
+            f"An error occurred during the pipeline at {now}.\n"
+            "No structured log entries found — check Snakemake's own output.\n"
+            "Log directory: log/"
+        )
     send_email(
         subject="❌ Snakemake pipeline failed",
-        body=f"An error occurred during the pipeline at {now}.\nCheck the logs for details."
+        body=body
     )
 
