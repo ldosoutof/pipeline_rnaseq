@@ -186,7 +186,7 @@ Les deux fichiers sont écrits dans `<workDir>/launch_folder/`.
 ```bash
 python scripts/preprocess.py \
     --path    /chemin/vers/pipeline/ \
-    --workDir /chemin/vers/run/      \
+    --workDir /chemin/vers/répertoire de travail du run/      \
     --dataDir /chemin/vers/run/         # doit contenir un sous-dossier fastq/
 
 # site_paths hors de template/ :
