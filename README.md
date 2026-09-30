@@ -102,7 +102,7 @@ Les deux fichiers sont écrits dans `<workDir>/launch_folder/`.
 ```bash
 python scripts/preprocess.py \
     --path    /chemin/vers/pipeline/ \
-    --workDir /chemin/vers/run/      \
+    --workDir /chemin/vers/répertoire de travail du run/      \
     --dataDir /chemin/vers/run/         # doit contenir un sous-dossier fastq/
 
 # site_paths hors de template/ :
@@ -126,11 +126,30 @@ python scripts/preprocess.py -p … -w … -d … \
   génère un config avec les chemins génériques `/path/to/…` du template ; il
   liste alors les clés restées génériques à compléter avant lancement.
 
+### Points de vigilance
+
+- **Convention FASTQ en dur** : la détection ne reconnaît que le motif
+  `*_R1.fastq.gz`. Un autre schéma (`*_R1_001.fastq.gz`, `.fq.gz`, …) ne sera pas
+  détecté correctement.
+- **Identifiant court d'échantillon** : plusieurs étapes (métriques, graphiques
+  OUTRIDER, rattachement au run) dérivent un ID court en prenant **tout ce qui
+  précède le premier séparateur** (`-`, `_` ou `.`) du nom d'échantillon
+  (ex. `26D0643-XXX-XXXX-STEMC-PUROMOINS` → `26D0643`). Cet ID court doit donc
+  être **unique** entre échantillons et **ne contenir aucun `-`, `_` ni `.`** en
+  son sein. Deux échantillons dont les noms ne diffèrent qu'après le premier
+  séparateur produiraient le même ID court et seraient confondus. La longueur
+  n'est pas imposée par le pipeline (la convention CHU `26D`+4 chiffres = 7
+  caractères n'est qu'un usage, pas une contrainte).
+- Si `site_paths.yml` est absent, le script **n'échoue pas** mais avertit et
+  génère un config avec les chemins génériques `/path/to/…` du template ; il
+  liste alors les clés restées génériques à compléter avant lancement.
+
 ### Enchaînement
 
 Une fois `config.yml` et `launch.sh` générés, le run se lance simplement avec
 `bash <workDir>/launch_folder/launch.sh` — voir
 [Lancement › Lancement simple](#lancement-simple-via-launchsh).
+
 
 ---
 
