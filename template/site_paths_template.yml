@@ -71,7 +71,7 @@ mail_to:   []
 warn_max_dup:          40.0
 warn_max_out_hyper:    20
 warn_max_fraser_hyper: 20
-warn_max_hba_total:    5000.0
+warn_max_hba_total:    5.0     # TPM cumulés HBA1+HBA2+HBB
 
 # --- Retour des résultats vers sitatst ----------------------------------------
 # Utilisé par le watcher OVH (scripts/send_results_to_sitatst.py) après un run

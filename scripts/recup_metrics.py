@@ -15,7 +15,7 @@ parser.add_argument("--warnings_output",   default="",     help="Output path for
 parser.add_argument("--max_dup",           type=float, default=40.0,  help="Seuil taux de duplication (%%) — défaut 40")
 parser.add_argument("--max_out_hyper",     type=int,   default=20,    help="Seuil nb événements OUTRIDER hyper — défaut 20")
 parser.add_argument("--max_fraser_hyper",  type=int,   default=20,    help="Seuil nb événements FRASER hyper — défaut 20")
-parser.add_argument("--max_hba_total",     type=float, default=5000.0,help="Seuil TPM HBA_total (contamination érythrocytaire) — défaut 5000")
+parser.add_argument("--max_hba_total",     type=float, default=5.0,   help="Seuil HBA_total = TPM cumulés HBA1+HBA2+HBB (contamination érythrocytaire) — défaut 5 TPM")
 args = parser.parse_args()
 
 # === CONFIGURATION ===

@@ -387,7 +387,7 @@ rule generate_metrics:
         max_dup             = config.get("warn_max_dup",          40.0),
         max_out_hyper       = config.get("warn_max_out_hyper",    20),
         max_fraser_hyper    = config.get("warn_max_fraser_hyper", 20),
-        max_hba_total       = config.get("warn_max_hba_total",    5000.0),
+        max_hba_total       = config.get("warn_max_hba_total",    5.0),   # TPM cumulés HBA1+HBA2+HBB
         log_start           = lambda wc, input, threads: log_start("generate_metrics", wc, threads),
         log_end             = LOG_END
     conda:
