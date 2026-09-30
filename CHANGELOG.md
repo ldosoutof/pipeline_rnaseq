@@ -6,6 +6,9 @@ impact sur les résultats.
 
 ## [Non publié]
 
+### Ajouté
+- `pipeline_versions.tsv` : ligne `pipeline` avec la version git du pipeline exécuté (`git describe --tags --dirty`). Chaque run est rattaché à une version identifiée ; le suffixe `-dirty` signale une modification hors git (procédure de gestion des versions, § 3 et § 9). Impact sur les résultats : aucun.
+
 ### Modifié
 - **Un seul chemin d'ingestion des métriques** : le watcher de sitatst, au retour des résultats. Le pipeline ne pousse plus vers le Pushgateway (`push_metrics.py`) et n'écrit plus dans aucune base QC : ni localement (`qc_db`, règle `generate_metrics`), ni à distance (`update_db.py` lancé après la synchronisation). Le transfert des résultats vers sitatst et le contrôle d'intégrité sont conservés. Impact sur les résultats : aucun (fichiers produits identiques).
 - Configuration : clés `qc_db`, `prometheus_*`, `sync_sitatst.update_db`, `remote_db` et `remote_update_db_script` retirées de `config_template.yml`, `site_paths.yml` et `site_paths_template.yml`.

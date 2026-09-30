@@ -12,6 +12,24 @@ def get_python_version():
     return ".".join(map(str, sys.version_info[:3]))
 
 
+def get_pipeline_version():
+    """
+    Version git du pipeline exécuté (procédure de gestion des versions, § 3) :
+    tag + commit, suffixe -dirty si des fichiers ont été modifiés hors git dans
+    le dossier du pipeline. Rattache chaque run à une version identifiée.
+    """
+    try:
+        r = subprocess.run(["git", "-C", PIPELINE_DIR, "describe", "--tags", "--dirty", "--always"],
+                           capture_output=True, text=True, timeout=30)
+        v = r.stdout.strip()
+        if r.returncode == 0 and v:
+            return v
+        err = (r.stderr.strip().splitlines() or ["erreur inconnue"])[-1]
+        return f"version git inconnue ({err})"
+    except Exception as e:
+        return f"version git inconnue ({e})"
+
+
 # --- rule to collect and save versions --------------------------------------
 rule save_pipeline_versions:
     """
@@ -22,6 +40,7 @@ rule save_pipeline_versions:
         FASTQ_DIR + "/../pipeline_v0/metrics/pipeline_versions.tsv"
     run:
         versions = {
+            "pipeline":   get_pipeline_version(),
             "fastqc":     get_version_from_env("fastqc --version | head -1 | cut -d' ' -f2"),
             "fastp":      get_version_from_env("fastp --version"),
             "STAR":       get_version_from_env("STAR --version | head -1 | cut -d' ' -f2"),
