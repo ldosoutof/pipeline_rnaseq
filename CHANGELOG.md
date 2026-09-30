@@ -8,10 +8,13 @@ impact sur les résultats.
 
 ### Ajouté
 - `pipeline_versions.tsv` : ligne `pipeline` avec la version git du pipeline exécuté (`git describe --tags --dirty`). Chaque run est rattaché à une version identifiée ; le suffixe `-dirty` signale une modification hors git (procédure de gestion des versions, § 3 et § 9). Impact sur les résultats : aucun.
+- `tools/make_pilot_env.sh` : prépare un run pilote isolé pour la porte de validation (cohorte de liens vers la production, limitée par défaut aux runs antérieurs au run rejoué ; FASTQ liés ; caches FRASER, table d'identifiants et `site_paths_dev.yml` dans un dossier de développement ; synchronisation vers sitatst désactivée). Rien n'est écrit dans `prod/`.
+- Option `cohort_follow_links` (`fraser_config_create.py --follow_links`) : parcourt les dossiers de run liés au premier niveau de la cohorte. Désactivée par défaut ; activée uniquement par `site_paths_dev.yml`.
 
 ### Modifié
 - **Un seul chemin d'ingestion des métriques** : le watcher de sitatst, au retour des résultats. Le pipeline ne pousse plus vers le Pushgateway (`push_metrics.py`) et n'écrit plus dans aucune base QC : ni localement (`qc_db`, règle `generate_metrics`), ni à distance (`update_db.py` lancé après la synchronisation). Le transfert des résultats vers sitatst et le contrôle d'intégrité sont conservés. Impact sur les résultats : aucun (fichiers produits identiques).
 - Configuration : clés `qc_db`, `prometheus_*`, `sync_sitatst.update_db`, `remote_db` et `remote_update_db_script` retirées de `config_template.yml`, `site_paths.yml` et `site_paths_template.yml`.
+- FRASER : la cohorte de référence est cherchée dans `runs_dir`, comme pour les matrices HTSeq et featureCounts et pour la PCA, et non plus dans le dossier parent du run. Identique en production (même dossier). Impact sur les résultats : aucun.
 
 ### Corrigé
 - `pipeline_versions.tsv` : version de featureCounts détectée (`featureCounts -v` affiche une ligne vide avant la version) ; si un outil ne renvoie pas sa version à l'exécution (cas de MultiQC), elle est lue dans les métadonnées du paquet conda et marquée « via conda-meta ». Clôt le reliquat de l'écart NC-01. Impact sur les résultats : aucun.

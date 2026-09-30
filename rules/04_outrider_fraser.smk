@@ -132,6 +132,8 @@ rule fraser_config:
         fraser         = fraser_count,
         scripts        = PIPELINE_DIR,
         excluded_runs  = config.get("fraser_excluded_runs", ""),
+        runs_dir      = RUNS_DIR,   # cohorte : même racine que les matrices HTSeq/featureCounts et la PCA
+        follow_links  = "--follow_links" if config.get("cohort_follow_links", False) else "",
         log_start = lambda wc, input, threads: log_start("fraser_config", wc, threads),
         log_end   = LOG_END
     benchmark:
@@ -149,7 +151,8 @@ rule fraser_config:
         python {params.scripts}/scripts/fraser_config_create.py \
             --output        {output.fraser}          \
             --pattern       MOINS                    \
-            --root_dir      {input.dir}/../..        \
+            --root_dir      {params.runs_dir}        \
+            {params.follow_links} \
             --fraser_dir    {params.fraser}          \
             --blacklist     {params.blacklist}       \
             --excluded_runs "{params.excluded_runs}" \

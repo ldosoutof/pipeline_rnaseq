@@ -48,6 +48,10 @@ def parse_args():
     p.add_argument("--excluded_runs",  default="",
                    help="Comma-separated list of run tags to exclude "
                         "(e.g. RUN17,RUN23). Replaces the hardcoded RUN17 filter.")
+    p.add_argument("--follow_links",   action="store_true",
+                   help="Also walk run folders that are symbolic links at the first level "
+                        "of --root_dir (development cohort made of links to production runs). "
+                        "Off by default: historical behaviour.")
     # Legacy positional-argument compatibility (old CLI: script out pattern root fraser [bl])
     p.add_argument("positional", nargs="*",
                    help=argparse.SUPPRESS)
@@ -94,16 +98,30 @@ def load_blacklist(blacklist_file, tool="fraser"):
     return excluded
 
 
+def _walk_cohort(root_dir, follow_links=False):
+    """
+    os.walk de la racine de cohorte. Par défaut, comportement historique (les
+    dossiers liés ne sont pas parcourus). Avec follow_links, les dossiers de run
+    liés au 1er niveau de root_dir sont aussi parcourus (cohorte de développement
+    faite de liens vers la production) ; les liens plus profonds restent ignorés.
+    """
+    yield from os.walk(root_dir)
+    if follow_links:
+        for entry in sorted(os.scandir(root_dir), key=lambda e: e.name):
+            if entry.is_symlink() and entry.is_dir():
+                yield from os.walk(entry.path)
+
+
 def generate_config_fraser(output_filename, pattern, root_dir,
                            fraser_output_dir, blacklist_file=None,
-                           excluded_runs=None):
+                           excluded_runs=None, follow_links=False):
     excluded_runs = set(excluded_runs or [])
 
     blacklist = load_blacklist(blacklist_file or "", tool="fraser")
 
     # Collect BAMs — keep most recent run per sample_id
     sample_to_bams = defaultdict(list)
-    for dirpath, _dirnames, filenames in os.walk(root_dir):
+    for dirpath, _dirnames, filenames in _walk_cohort(root_dir, follow_links):
         if "RNASEQ" not in dirpath or "star" not in dirpath:
             continue
         # Skip explicitly excluded runs
@@ -171,6 +189,7 @@ def main():
         fraser_output_dir = args.fraser_dir,
         blacklist_file    = args.blacklist,
         excluded_runs     = [r.strip() for r in args.excluded_runs.split(",") if r.strip()],
+        follow_links      = args.follow_links,
     )
 
 
