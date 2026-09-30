@@ -478,16 +478,23 @@ rule all:
         rules.generate_metrics.output.metrics,
         rules.generate_metrics.output.warnings,
         # ── Bundling & rapports ─────────────────────────────────────────────
-        # _CURRENT_RUN_TAG est toujours inclus (run frais où RUN_SAMPLE est vide).
+        # Pour le run COURANT, cleanup_final supprime analysis_input/,
+        # analysis_output/ et analysis_output_current/ en fin de run : les exiger
+        # ici faisait échouer « all » APRÈS le nettoyage (fichiers absents), donc
+        # tout run complet finissait en erreur et onsuccess (courriel de succès,
+        # synchronisation vers sitatst) ne s'exécutait jamais. Ces zips
+        # intermédiaires ne sont donc exigés que pour les AUTRES runs de
+        # RUN_SAMPLE, dont les dossiers ne sont pas nettoyés. Pour le run courant,
+        # le zip hyper reste produit (entrée de run_rnaseq_analysis_hyper).
         [rules.make_analysis_zip.output.zip.format(run=r)
-         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+         for r in sorted({r for r, s, _ in RUN_SAMPLE} - {_CURRENT_RUN_TAG})],
         [rules.run_rnaseq_analysis.output.result_zip.format(run=r)
-         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+         for r in sorted({r for r, s, _ in RUN_SAMPLE} - {_CURRENT_RUN_TAG})],
         [rules.run_rnaseq_analysis_current_run.output.result_zip.format(run=r)
-         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+         for r in sorted({r for r, s, _ in RUN_SAMPLE} - {_CURRENT_RUN_TAG})],
         # ── Bundling & rapports — pipeline hyper ───────────────────────────
         [rules.make_analysis_zip_hyper.output.zip.format(run=r)
-         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+         for r in sorted({r for r, s, _ in RUN_SAMPLE} - {_CURRENT_RUN_TAG})],
         [rules.run_rnaseq_analysis_hyper.output.result_zip.format(run=r)
          for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
         rules.generate_and_run_param_notebook.output.executed_nb,
