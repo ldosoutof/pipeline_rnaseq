@@ -83,21 +83,35 @@ class TestLogStart:
 
 class TestCollectFailedLogs:
     def _write_log(self, log_dir, rule_name, exit_code):
-        """Write a synthetic structured log (start + end JSON lines)."""
+        """
+        Synthetic logs as written by the pipeline: JSON start/end records in
+        log/events/<rule>.jsonl (log_start + EXIT trap) and the tool output in
+        the rule's own text log, log/<rule>/log.txt.
+        """
+        ev = log_dir / "events"
+        ev.mkdir(parents=True, exist_ok=True)
+        with open(ev / f"{rule_name}.jsonl", "a") as f:
+            f.write(json.dumps({"event": "start", "rule": rule_name, "wildcards": {},
+                                "threads": 1, "timestamp": "2026-01-01T00:00:00Z"}) + "\n")
+            f.write(json.dumps({"event": "end", "rule": rule_name, "wildcards": {},
+                                "threads": 1, "exit_code": exit_code,
+                                "timestamp": "2026-01-01T00:01:00Z"}) + "\n")
         d = log_dir / rule_name
         d.mkdir(parents=True, exist_ok=True)
         p = d / "log.txt"
-        lines = [
-            json.dumps({"event": "start", "rule": rule_name,
-                        "wildcards": {}, "threads": 1,
-                        "timestamp": "2026-01-01T00:00:00Z"}),
-            "some tool output line",
-            json.dumps({"event": "end", "rule": rule_name,
-                        "exit_code": exit_code,
-                        "timestamp": "2026-01-01T00:01:00Z"}),
-        ]
-        p.write_text("\n".join(lines))
+        p.write_text("some tool output line\n")
         return p
+
+    def test_interrupted_job_is_reported(self, tmp_path):
+        """A start record without end record (job killed) is reported with exit_code None."""
+        log_dir = tmp_path / "log"
+        ev = log_dir / "events"
+        ev.mkdir(parents=True)
+        (ev / "star.jsonl").write_text(json.dumps({"event": "start", "rule": "star",
+                                                   "wildcards": {"sample": "26D0001"}, "threads": 8,
+                                                   "timestamp": "2026-01-01T00:00:00Z"}) + "\n")
+        result = collect_failed_logs(log_dir=str(log_dir))
+        assert len(result) == 1 and result[0]["exit_code"] is None
 
     def test_returns_empty_list_when_all_succeeded(self, tmp_path):
         log_dir = tmp_path / "log"
@@ -142,7 +156,7 @@ class TestCollectFailedLogs:
         assert result == []
 
     def test_ignores_log_with_no_json_end_record(self, tmp_path):
-        """A log file with only plain text (tool crashed before LOG_END) is skipped."""
+        """A plain-text log without any events file is not reported (nothing structured)."""
         log_dir = tmp_path / "log"
         d = log_dir / "bad_rule"
         d.mkdir(parents=True)

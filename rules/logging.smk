@@ -3,56 +3,24 @@
 # Include ONCE in pipeline.smk before any rule file:
 #   include: '../rules/logging.smk'
 #
-# Every rule shell block should start / end with the two macros:
+# Every rule shell block starts with {params.log_start} and ends with
+# {params.log_end}.
 #
-#   {params.log_start}   — writes a JSON header to {log.run_info}
-#   {params.log_end}     — appends a JSON footer (exit_code, duration, outputs)
+#   {params.log_start}  appends a JSON "start" record to log/events/<rule>.jsonl
+#                       and installs an EXIT trap that appends the JSON "end"
+#                       record with the REAL exit code — on success AND on failure.
+#   {params.log_end}    kept for compatibility; no-op (the trap writes the end).
 #
-# On failure Snakemake calls onerror; the last log entry written is the
-# JSON footer with exit_code != 0, making grep / jq trivial.
+# The events file path is computed in Python (rule name), so it never depends on
+# a Snakemake placeholder: a params value is inserted verbatim into the shell
+# command and is NOT formatted a second time (a literal "{log.run_info}" in a
+# params value used to create a file literally named "{log.run_info}").
 # =============================================================================
 
 import json
 import os
 from pathlib import Path
 from datetime import datetime
-
-
-def _log_header(rule, wildcards_dict, input_dict, params_dict, threads, log_path):
-    """
-    Return a bash snippet that writes a JSON header line to log_path.
-    Called at rule parse-time to build the params.log_start string.
-    The actual timestamp is evaluated at shell execution time via $(date …).
-    """
-    meta = {
-        "event":     "start",
-        "rule":      rule,
-        "wildcards": wildcards_dict,
-        "threads":   threads,
-    }
-    # Embed static metadata; timestamp injected at runtime
-    meta_json = json.dumps(meta, separators=(',', ':'))
-    # Strip the closing } so we can splice in the runtime timestamp
-    meta_open = meta_json[:-1]  # everything except trailing }
-    snippet = (
-        'mkdir -p "$(dirname {log.run_info})" && '
-        f'echo \'{meta_open},"timestamp":"\'$(date -u +"%Y-%m-%dT%H:%M:%SZ")\'"\' >> {{log.run_info}}'
-    )
-    return snippet
-
-
-def _log_footer():
-    """
-    Return a bash snippet appended after the tool command.
-    Captures $? so the exit code is recorded even when the rule is about
-    to fail — Snakemake sees the non-zero exit AFTER this snippet runs.
-    """
-    return (
-        '_EXIT=$? ; '
-        '_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ") ; '
-        'echo \'{"event":"end","exit_code":\'$_EXIT\',"timestamp":"\'$_END\'"}\' >> {log.run_info} ; '
-        '(exit $_EXIT)'          # re-raise so Snakemake marks the rule failed
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -76,45 +44,32 @@ def _log_footer():
 # LOG_END is a module-level constant; log_start() is a helper function.
 # ---------------------------------------------------------------------------
 
-LOG_END = (
-    # Prefer $SNAKEMAKE_LOG (set by log_start); fall back to {log.run_info}
-    # so LOG_END is safe even if log_start was not called first.
-    # Second fallback to /dev/null guards against rules with no log: block.
-    ': "${SNAKEMAKE_LOG:={log.run_info}}" ; '
-    ': "${SNAKEMAKE_LOG:=/dev/null}" ; '
-    '_EXIT=$? ; '
-    '_END=$(date -u +"%Y-%m-%dT%H:%M:%SZ") ; '
-    'echo \'{"event":"end","exit_code":\'$_EXIT\',"timestamp":"\'$_END\'"}\' >> "$SNAKEMAKE_LOG" ; '
-    '(exit $_EXIT)'
-)
+LOG_END = ":"   # no-op : the EXIT trap installed by log_start writes the end record
 
 
 def log_start(rule_name, wildcards, threads=1):
     """
-    Returns a bash one-liner that appends a JSON 'start' record to {log.run_info}.
-    Wildcard values are serialised so the log is self-contained.
+    Bash snippet: append a JSON 'start' record to log/events/<rule>.jsonl and
+    install an EXIT trap appending the JSON 'end' record with the real exit code
+    (the trap also fires when `set -e` aborts the shell on a failing command).
 
     Usage inside a rule params lambda:
         log_start = lambda wc, input, threads: log_start("my_rule", wc, threads),
     """
     wc_dict = dict(wildcards) if wildcards else {}
-    meta = json.dumps({
-        "event":     "start",
-        "rule":      rule_name,
-        "wildcards": wc_dict,
-        "threads":   threads,
-    }, separators=(',', ':'))
-    # Drop the trailing } so we can splice in the runtime timestamp.
-    # We use plain string concatenation to avoid f-string / .format() collisions
-    # with the Snakemake {log.run_info} placeholder.
-    meta_open = meta[:-1]   # e.g. '{"event":"start","rule":"fastqc",...'
-    ts_suffix  = ',"timestamp":"\'$(date -u +"%Y-%m-%dT%H:%M:%SZ")\'"}'
-    log_ref    = "$SNAKEMAKE_LOG"
-    return (
-        'SNAKEMAKE_LOG="{log.run_info}" ; '
-        + 'mkdir -p "$(dirname $SNAKEMAKE_LOG)" && '
-        + "echo '" + meta_open + ts_suffix + "' >> " + log_ref
-    )
+    meta = json.dumps({"rule": rule_name, "wildcards": wc_dict, "threads": threads},
+                      separators=(',', ':'))[1:-1]          # inner part, no braces
+    meta = meta.replace("'", "'\\''")                         # safe inside '...'
+    log_file = f"log/events/{rule_name}.jsonl"
+    ts = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+    start = ('echo "{\\"event\\":\\"start\\",$_LOG_META,\\"timestamp\\":\\"' + ts
+             + '\\"}" >> "$_LOG_FILE"')
+    end = ('_rc=$? ; echo "{\\"event\\":\\"end\\",$_LOG_META,\\"exit_code\\":$_rc,'
+           '\\"timestamp\\":\\"' + ts + '\\"}" >> "$_LOG_FILE"')
+    return (f"_LOG_FILE='{log_file}' ; _LOG_META='{meta}' ; "
+            'mkdir -p "$(dirname "$_LOG_FILE")" ; '
+            + start + " ; "
+            + f"trap '{end}' EXIT")
 
 
 # ---------------------------------------------------------------------------
@@ -123,41 +78,64 @@ def log_start(rule_name, wildcards, threads=1):
 
 def collect_failed_logs(log_dir="log", tail_lines=30):
     """
-    Scan log_dir for run_info logs whose last JSON line has exit_code != 0.
-    Returns a list of dicts  { rule, log_path, last_lines, exit_code }.
-    Used in the onerror email to give an instant summary of what broke.
+    Read log/events/<rule>.jsonl and return one dict per failed or interrupted
+    job: { rule, log_path, exit_code, timestamp, tail }.
+    A job is identified by (rule, wildcards). exit_code is None when a start
+    record has no matching end record (job killed or still running).
     """
     failures = []
-    log_root = Path(log_dir)
-    if not log_root.exists():
+    ev_root = Path(log_dir) / "events"
+    if not ev_root.exists():
         return failures
-
-    for log_file in sorted(log_root.rglob("log.txt")) :
+    for ev_file in sorted(ev_root.glob("*.jsonl")):
         try:
-            lines = log_file.read_text(errors="replace").splitlines()
+            lines = ev_file.read_text(errors="replace").splitlines()
         except OSError:
             continue
-
-        # Walk backwards looking for a JSON end record
-        for line in reversed(lines):
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
+        last, raw = {}, {}             # job key -> last record / its raw lines
+        for line in lines:
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if rec.get("event") == "end" and rec.get("exit_code", 0) != 0:
+            key = json.dumps(rec.get("wildcards", {}), sort_keys=True)
+            last[key] = rec
+            raw.setdefault(key, []).append(line)
+        for key, rec in last.items():
+            if rec.get("event") == "start" or rec.get("exit_code", 0) != 0:
+                rule = rec.get("rule", ev_file.stem)
+                text_log = _find_rule_log(Path(log_dir), rule, rec.get("wildcards", {}))
+                tail = raw[key][-tail_lines:]
+                if text_log is not None:
+                    try:
+                        tail += ["--- " + str(text_log) + " ---"] + \
+                                text_log.read_text(errors="replace").splitlines()[-tail_lines:]
+                    except OSError:
+                        pass
                 failures.append({
-                    "rule":       rec.get("rule", str(log_file.parent.name)),
-                    "log_path":   str(log_file),
-                    "exit_code":  rec["exit_code"],
-                    "timestamp":  rec.get("timestamp", "?"),
-                    "tail":       "\n".join(lines[-tail_lines:]),
+                    "rule":      rule,
+                    "log_path":  str(text_log or ev_file),
+                    "exit_code": rec.get("exit_code"),
+                    "timestamp": rec.get("timestamp", "?"),
+                    "tail":      "\n".join(tail),
                 })
-            break   # only inspect the last end record per file
-
     return failures
+
+
+def _find_rule_log(log_root, rule, wildcards):
+    """
+    Best effort : log.txt de la règle (sortie de l'outil). Les règles écrivent
+    en général dans log/<règle>/[<wildcard>/]log.txt ; on retient le fichier dont
+    le chemin contient le nom de la règle et toutes les valeurs de wildcards.
+    """
+    values = [str(v) for v in (wildcards or {}).values()]
+    best = None
+    for p in log_root.rglob("log.txt"):
+        parts = p.parts
+        if rule in parts and all(v in str(p) for v in values):
+            if best is None or len(parts) > len(best.parts):
+                best = p
+    return best
 
 
 # ---------------------------------------------------------------------------
