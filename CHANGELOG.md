@@ -17,6 +17,9 @@ impact sur les résultats.
 - `pipeline_versions.tsv` : version de featureCounts détectée (`featureCounts -v` affiche une ligne vide avant la version) ; si un outil ne renvoie pas sa version à l'exécution (cas de MultiQC), elle est lue dans les métadonnées du paquet conda et marquée « via conda-meta ». Clôt le reliquat de l'écart NC-01. Impact sur les résultats : aucun.
 - Journal d'événements des règles (`rules/logging.smk`) : les événements de début et de fin étaient écrits dans un fichier littéralement nommé `{log.run_info}` (un paramètre Snakemake n'est pas formaté une seconde fois), et le code de sortie enregistré valait toujours 0. Ils sont désormais écrits dans `log/events/<règle>.jsonl` ; l'événement de fin est posé par un `trap EXIT`, avec le vrai code de sortie, en cas de succès comme d'échec. `collect_failed_logs` lit ce nouvel emplacement, signale aussi les tâches interrompues et joint la fin du `log.txt` de la règle. Tests mis à jour. Impact sur les résultats : aucun.
 
+### Sécurité
+- Synchronisation vers sitatst : `sshpass -e` (mot de passe lu dans la variable `SSHPASS`) au lieu de `sshpass -p <mot de passe>`, qui l'exposait à tous les utilisateurs du serveur dans la liste des processus. Utilisé seulement si `pass_file` est renseigné ; la clé SSH dédiée reste la méthode recommandée.
+
 ### Documentation
 - `config_template.yml` : commentaire expliquant que les chemins chrX réels viennent de `site_paths.yml` (écart NC-06 levé : aucun run n'utilise les chemins fictifs).
 

@@ -608,7 +608,9 @@ def rsync_results_to_sitatst():
         except Exception as e:
             print(f'[WARN] Lecture pass_file impossible : {e} — transfert annulé.')
             return
-        cmd = ['sshpass', '-p', password] + base_rsync
+        # sshpass -e : le mot de passe est lu dans la variable SSHPASS (cmd_env),
+        # il n'apparaît pas dans la liste des processus (ps) comme avec -p.
+        cmd = ['sshpass', '-e'] + base_rsync
         cmd_env = {**os.environ, 'SSHPASS': password}
     else:
         cmd = base_rsync
@@ -640,7 +642,7 @@ def rsync_results_to_sitatst():
     if ssh_key:
         ssh_base += ['-i', ssh_key]
     ssh_base += [f'{user}@{host}', remote_check]
-    ssh_cmd  = (['sshpass', '-p', password] + ssh_base) if (pass_file and os.path.isfile(pass_file)) else ssh_base
+    ssh_cmd  = (['sshpass', '-e'] + ssh_base) if (pass_file and os.path.isfile(pass_file)) else ssh_base
     try:
         chk = subprocess.run(ssh_cmd, env=cmd_env, capture_output=True, text=True, timeout=3600)
         if 'INTEGRITY_BAD=0' not in (chk.stdout or ''):
