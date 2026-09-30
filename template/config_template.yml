@@ -64,7 +64,7 @@ panelapp: "/path/to/references/annotation/panelapp_DI_green.tsv"
 hpo:      "/path/to/references/annotation/phenotype.hpoa"
 pheno:    "/path/to/references/annotation/genes_to_phenotype.txt"
 pli:      "/path/to/references/annotation/PLI.vcf"
-gnomad:   "/path/to/references/annotation/gnomad_v4_by_gene.tsv"
+gnomad:   "/path/to/references/annotation/gnomad.v4.1.constraint_metrics.tsv"
 mendeliome: "/path/to/references/annotation/mendeliome.json"
 
 # --- Matrices de comptage (historique multi-run) -----------------------------

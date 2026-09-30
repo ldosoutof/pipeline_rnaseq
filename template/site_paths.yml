@@ -35,7 +35,7 @@ panelapp:   "/dataref/bank/human/annotation/GRCh38/current/DI_green.tsv"
 hpo:        "/dataref/bank/human/annotation/GRCh38/hpo/phenotype.hpoa"
 pheno:      "/dataref/bank/human/annotation/GRCh38/hpo/genes_to_phenotype.txt"
 pli:        "/dataref/bank/human/annotation/GRCh38/PLI.vcf"
-gnomad:     "/dataref/bank/human/annotation/GRCh38/gnomad/gnomad_v4_by_gene.tsv"
+gnomad:     "/dataref/bank/human/annotation/GRCh38/gnomad/gnomad.v4.1.constraint_metrics.tsv"
 mendeliome: "/dataref/bank/human/annotation/GRCh38/mendeliome/mendeliome_australia.json"
 
 

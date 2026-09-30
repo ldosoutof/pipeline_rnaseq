@@ -157,7 +157,7 @@ def _process_and_save_sample(args):
 
     # -- Annotation gnomAD ----------------------------------------------------
     if gnomad_dict and gene_col in df.columns:
-        for metric in ('pLI', 'oe_lof', 'lof_z', 'mis_z', 'syn_z',
+        for metric in ('pLI', 'oe_lof', 'loeuf', 'lof_z', 'mis_z', 'syn_z',
                        'constraint_flag', 'oe_mis', 'oe_syn'):
             df[metric] = df[gene_col].map(
                 lambda g, m=metric: gnomad_dict.get(str(g), {}).get(m)
@@ -182,7 +182,7 @@ def _process_and_save_sample(args):
             'totalCounts', 'meanCounts', 'meanTotalCounts', 'nonsplitCounts',
             'nonsplitProportion', 'nonsplitProportion_99quantile',
             'gene_name', 'gene_id', 'chrom',
-            'pLI', 'oe_lof', 'lof_z', 'mis_z',
+            'pLI', 'oe_lof', 'loeuf', 'lof_z', 'mis_z',
             'confidence_level', 'Mode_Of_Inheritance', 'Phenotypes',
         ]
         drop = DROP_FRASER
@@ -192,7 +192,7 @@ def _process_and_save_sample(args):
             'rawcounts', 'rawCounts', 'meanRawcounts', 'normcounts', 'meanCorrected',
             'theta', 'aberrant', 'AberrantBySample', 'AberrantByGene',
             'padj_rank', 'hgnc_symbol', 'gene_name', 'chrom', 'start', 'end', 'strand',
-            'pLI', 'oe_lof', 'lof_z', 'mis_z',
+            'pLI', 'oe_lof', 'loeuf', 'lof_z', 'mis_z',
             'confidence_level', 'Mode_Of_Inheritance', 'Phenotypes',
         ]
         drop = DROP_OUTRIDER
@@ -252,12 +252,12 @@ def _gtf_to_dict(gtf_df):
 def _gnomad_to_dict(gnomad_df):
     """
     Convertit gnomAD en dict picklable : gene -> {pLI, oe_lof, lof_z, ...}
-    Le renommage v4 (syn.z_score -> syn_z) est deja fait dans load_gnomad.
+    Le renommage des colonnes v4 vers les noms v2 est fait dans load_gnomad.
     drop_duplicates en filet de securite si canonical non filtre.
     """
     if gnomad_df is None:
         return {}
-    wanted = ["pLI", "oe_lof", "lof_z", "mis_z", "syn_z",
+    wanted = ["pLI", "oe_lof", "loeuf", "lof_z", "mis_z", "syn_z",
               "constraint_flag", "oe_mis", "oe_syn"]
     cols = [c for c in wanted if c in gnomad_df.columns]
     df = gnomad_df[["gene"] + cols].copy()
@@ -435,31 +435,76 @@ class RNASeqProcessorPerSample:
         logger.info(f"  -> {len(self.gtf_data):,} genes")
         return self.gtf_data
 
+    # Colonnes gnomAD v4.x -> noms utilisés en aval (identiques à gnomAD v2)
+    GNOMAD_V4_RENAME = {
+        "lof.pLI":         "pLI",
+        "lof.oe":          "oe_lof",
+        "lof.oe_ci.upper": "loeuf",     # LOEUF : borne sup. de l'IC 90 % de o/e LoF
+        "lof.z_score":     "lof_z",
+        "mis.z_score":     "mis_z",
+        "syn.z_score":     "syn_z",
+        "mis.oe":          "oe_mis",
+        "syn.oe":          "oe_syn",
+        "constraint_flags": "constraint_flag",
+    }
+    GNOMAD_V2_RENAME = {"oe_lof_upper": "loeuf"}
+
     def load_gnomad(self):
         """
-        Charge gnomAD v2 ou v4.
-        - v4 : filtre sur canonical=True (une ligne par transcrit → une par gene)
-               et renomme syn.z_score → syn_z pour uniformiser avec v2.
-        - v2 : deja une ligne par gene, aucun traitement special.
+        Charge les scores de contrainte gnomAD (v4.1 recommandé, v2 accepté).
+
+        v4.x (gnomad.v4.1.constraint_metrics.tsv) : une ligne par TRANSCRIT,
+        Ensembl et RefSeq, colonnes préfixées (lof., mis., syn.). On garde une
+        ligne par gène : transcrits Ensembl (ENST) uniquement, en priorité le
+        transcrit MANE Select, sinon le canonique ; lignes sans symbole écartées.
+        Les colonnes sont renommées vers les noms v2 utilisés en aval ; toute
+        colonne attendue absente est signalée (au lieu d'un vide silencieux).
+
+        v2 (by_gene) : une ligne par gène ; oe_lof_upper renommé loeuf.
         """
         if self.gnomad_file is None:
             return None
         logger.info(f"Chargement gnomAD : {self.gnomad_file}")
-        self.gnomad_data = pd.read_csv(self.gnomad_file, sep='\t', low_memory=False)
+        df = pd.read_csv(self.gnomad_file, sep='\t', low_memory=False)
 
-        # gnomAD v4 : filtre canonical
-        if "canonical" in self.gnomad_data.columns:
-            n_before = len(self.gnomad_data)
-            self.gnomad_data = self.gnomad_data[
-                self.gnomad_data["canonical"] == True
-            ].copy()
-            logger.info(f"  gnomAD v4 detecte — filtre canonical : {n_before:,} -> {len(self.gnomad_data):,}")
-            # Renommer syn.z_score -> syn_z pour uniformiser
-            self.gnomad_data = self.gnomad_data.rename(columns={"syn.z_score": "syn_z"})
+        is_v4 = any(c in df.columns for c in ("lof.pLI", "mane_select", "lof.oe"))
+        if is_v4:
+            n0 = len(df)
+            df = df[df["gene"].notna() & (df["gene"].astype(str).str.upper() != "NA")]
+            if "transcript" in df.columns:
+                ens = df["transcript"].astype(str).str.startswith("ENST")
+                if ens.any():
+                    df = df[ens]
+
+            def _flag(col):
+                if col not in df.columns:
+                    return pd.Series(False, index=df.index)
+                return df[col].astype(str).str.strip().str.lower().isin(("true", "1"))
+
+            prio = pd.Series(2, index=df.index)
+            prio[_flag("canonical")] = 1
+            prio[_flag("mane_select")] = 0
+            df = (df.assign(_prio=prio)
+                    .sort_values(["gene", "_prio"], kind="stable"))
+            n_mane = int(((df["_prio"] == 0)).groupby(df["gene"]).any().sum())
+            kept = df[df["_prio"] < 2].drop_duplicates("gene", keep="first")
+            n_no_ref = df["gene"].nunique() - kept["gene"].nunique()
+            df = kept.drop(columns="_prio")
+
+            missing = [c for c in self.GNOMAD_V4_RENAME if c not in df.columns]
+            if missing:
+                logger.warning(f"  gnomAD v4 : colonnes attendues absentes -> {missing} "
+                               f"(les métriques correspondantes resteront vides)")
+            df = df.rename(columns=self.GNOMAD_V4_RENAME)
+            logger.info(f"  gnomAD v4 détecté : {n0:,} lignes (transcrits) -> {len(df):,} gènes "
+                        f"({n_mane:,} via MANE Select, {len(df) - n_mane:,} via transcrit canonique ; "
+                        f"{n_no_ref:,} gènes sans transcrit MANE ni canonique écartés)")
         else:
-            logger.info(f"  gnomAD v2 detecte")
+            df = df.rename(columns=self.GNOMAD_V2_RENAME)
+            logger.info("  gnomAD v2 détecté")
 
-        logger.info(f"  -> {len(self.gnomad_data):,} genes")
+        self.gnomad_data = df
+        logger.info(f"  -> {len(self.gnomad_data):,} gènes")
         return self.gnomad_data
 
     def load_mendeliome(self):
