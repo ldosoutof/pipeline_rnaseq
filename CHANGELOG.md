@@ -13,6 +13,9 @@ impact sur les résultats.
 ### Corrigé
 - `pipeline_versions.tsv` : version de featureCounts détectée (`featureCounts -v` affiche une ligne vide avant la version) ; si un outil ne renvoie pas sa version à l'exécution (cas de MultiQC), elle est lue dans les métadonnées du paquet conda et marquée « via conda-meta ». Clôt le reliquat de l'écart NC-01. Impact sur les résultats : aucun.
 
+### Documentation
+- `config_template.yml` : commentaire expliquant que les chemins chrX réels viennent de `site_paths.yml` (écart NC-06 levé : aucun run n'utilise les chemins fictifs).
+
 ### Retiré
 - `monitoring/` (Pushgateway, Prometheus, Grafana), `envs/dashboard_env.yml`, `scripts/update_db.py`, `scripts/backfill_db.py` : ils reçoivent ou affichent les métriques et rejoignent le dépôt du dashboard.
 
@@ -49,6 +52,7 @@ de référence à la qualification initiale (QUAL-INIT-RNASEQ-001).
 ### Limites connues
 - `pipeline_versions.tsv` : versions de featureCounts et de MultiQC non détectées (voir `[Non publié]`).
 - `monitoring/` est conservé dans cette version (appelé par `generate_metrics`) ; son retrait est prévu sur `dev`.
+- Tests unitaires : 80 réussis, 3 en échec dans `tests/test_fraser_config_create.py`. Les tests attendent l'ancien format à 5 colonnes (avec `gene`) ; `fraser_config_create.py` écrit désormais 4 colonnes (`sampleID`, `bamFile`, `group`, `pairedEnd`). Format à confirmer, puis tests à mettre à jour.
 
 ## Historique antérieur (reconstitué depuis git)
 - **Mars à juillet 2026 (non étiqueté)** : règle d'appel de variants chrX et graphique de biais X, mises à jour des règles, scripts, templates et environnements, tests unitaires, téléchargement des fichiers PanelApp, HPO et pLI.

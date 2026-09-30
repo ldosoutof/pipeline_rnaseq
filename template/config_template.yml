@@ -103,6 +103,9 @@ magnis_file: ""
 # Nécessite Singularity/Apptainer et --use-singularity au lancement de Snakemake.
 run_variant_calling: true
 deepvariant_image: "docker://google/deepvariant:1.8.0"
+# Chemins fictifs volontaires : les chemins réels de chrx_bed, g1000_chrx et
+# gnomad_chrx sont fournis par template/site_paths.yml, que preprocess.py
+# fusionne par-dessus ce template (les valeurs non vides du site l'emportent).
 chrx_bed:    "/path/to/references/bed/chrX_capture.bed"
 g1000_chrx:  "/path/to/references/annotation/1000G_chrX.vcf.gz"
 gnomad_chrx: "/path/to/references/annotation/gnomad_chrX.vcf.bgz"
