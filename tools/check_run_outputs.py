@@ -16,6 +16,8 @@ Contrôles (OK / KO / À VOIR) :
   gnomad       livrables par échantillon : colonne loeuf présente et renseignée
   nettoyage    .cleanup_done présent, analysis_input/ supprimé
   deepvariant  un VCF chrX par BAM (si le module a tourné)
+  version      même version dans run_info.json, pipeline_versions.tsv, qc_summary.tsv
+               et les zips de livrables ; ni « -dirty » ni inconnue
   retour       marqueur .results_synced (information ; désactivé en développement)
 Code de sortie : 1 si au moins un KO.
 """
@@ -175,6 +177,44 @@ def c_deepvariant(pv):
     check("deepvariant", "OK" if nv and nv == nb else "KO", f"{nv} VCF chrX pour {nb} BAM")
 
 
+def c_version(pv):
+    found = {}
+    ri = pv / "run_info.json"
+    if ri.is_file():
+        try:
+            found["run_info.json"] = json.loads(ri.read_text()).get("pipeline_version", "")
+        except json.JSONDecodeError:
+            found["run_info.json"] = "illisible"
+    f = pv / "metrics" / "pipeline_versions.tsv"
+    if f.is_file():
+        for l in f.read_text(errors="replace").splitlines():
+            if l.split("\t")[0].strip().lower() == "pipeline":
+                found["pipeline_versions.tsv"] = l.split("\t")[-1].strip()
+    q = pv / "metrics" / "qc_summary.tsv"
+    if q.is_file():
+        lines = q.read_text(errors="replace").splitlines()
+        head = lines[0].split("\t") if lines else []
+        if "pipeline_version" in head:
+            vals = {l.split("\t")[head.index("pipeline_version")] for l in lines[1:] if l.strip()}
+            found["qc_summary.tsv"] = ";".join(sorted(vals))
+    for zp in sorted(pv.glob("per_sample_hyper/*.zip")):
+        with zipfile.ZipFile(zp) as z:
+            if "PIPELINE_VERSION.txt" in z.namelist():
+                found[f"{zp.name}"] = z.read("PIPELINE_VERSION.txt").decode().strip()
+    if not found:
+        return check("version", "KO", "version du pipeline absente de toutes les sorties")
+    vals = set(found.values())
+    detail = " ; ".join(f"{k}={v}" for k, v in found.items())
+    if len(vals) > 1:
+        return check("version", "KO", "versions différentes : " + detail)
+    v = vals.pop()
+    missing = [n for n in ("run_info.json", "pipeline_versions.tsv", "qc_summary.tsv") if n not in found]
+    if v.endswith("-dirty") or "inconnue" in v or not v:
+        return check("version", "KO", f"version non identifiable ({v})")
+    check("version", "À VOIR" if missing else "OK",
+          f"{v} dans {len(found)} sortie(s)" + (f" ; absente de : {', '.join(missing)}" if missing else ""))
+
+
 def c_retour(rd):
     m = rd / ".results_synced"
     check("retour", "OK" if m.is_file() else "À VOIR",
@@ -191,7 +231,7 @@ def main():
     if not pv.is_dir():
         print(f"[ERROR] {pv} introuvable"); return 1
     c_fin(a.snakemake_log); c_versions(pv); c_events(a.workdir); c_metrics(pv); c_annot(pv)
-    c_gnomad(pv); c_cleanup(pv); c_deepvariant(pv); c_retour(rd)
+    c_gnomad(pv); c_cleanup(pv); c_deepvariant(pv); c_version(pv); c_retour(rd)
     w = max(len(n) for n, _, _ in RES)
     print(f"Contrôle de fin de run — {rd.name}")
     for n, s, d in RES:

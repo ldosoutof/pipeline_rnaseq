@@ -83,6 +83,7 @@ for dup_file in dup_files:
 
     # Run info
     sample_row["run_name"] = run_name
+    sample_row["pipeline_version"] = os.environ.get("RNASEQ_PIPELINE_VERSION", "")
     sample_row["date"]     = date
     sample_row["run_id"]   = run_id
 
@@ -183,6 +184,7 @@ col_order = [
     "nb event fraser", "nb event fraser hyper",
     *target_genes, "HBA_total",
     "nb_DI_green_expressed", "nb_DI_green_total", "pct_DI_green_TPM>10",
+    "pipeline_version",
 ]
 # Garder uniquement les colonnes présentes (sécurité)
 col_order = [c for c in col_order if c in summary_df.columns]

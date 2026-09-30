@@ -61,6 +61,59 @@ BLACKLIST_FILE = config.get('blacklist', '')
 # Tag du run courant — défini ici pour être disponible dans tous les includes
 _CURRENT_RUN_TAG = os.path.basename(os.path.dirname(FASTQ_DIR))
 
+##─────────────────────────────────────────────────────────────────────────────
+## Version du pipeline (traçabilité) : calculée UNE fois, exportée dans
+## l'environnement de tous les jobs (RNASEQ_PIPELINE_VERSION), écrite dans
+## pipeline_v0/run_info.json, qc_summary.tsv, les livrables par échantillon,
+## pipeline_versions.tsv et l'objet des courriels.
+##─────────────────────────────────────────────────────────────────────────────
+def _git(*args):
+    r = subprocess.run(["git", "-C", PIPELINE_DIR, *args], capture_output=True, text=True, timeout=30)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def get_pipeline_version():
+    """Tag + commit (git describe --tags --dirty --always) ; -dirty = fichiers modifiés hors git."""
+    try:
+        v = _git("describe", "--tags", "--dirty", "--always")
+        return v or "version git inconnue (dossier hors dépôt git ?)"
+    except Exception as e:
+        return f"version git inconnue ({e})"
+
+
+PIPELINE_VERSION = get_pipeline_version()
+PIPELINE_COMMIT  = _git("rev-parse", "HEAD") if not PIPELINE_VERSION.startswith("version git inconnue") else ""
+os.environ["RNASEQ_PIPELINE_VERSION"] = PIPELINE_VERSION
+print(f"[INFO] Version du pipeline : {PIPELINE_VERSION}")
+if PIPELINE_VERSION.endswith("-dirty"):
+    print("[WARN] Des fichiers du pipeline ont été modifiés hors git (-dirty) : "
+          "version non identifiable, à proscrire en production.")
+
+
+def _write_run_info(status=None):
+    """pipeline_v0/run_info.json : version, commit, run, début, fin et statut."""
+    import json
+    path = os.path.join(os.path.dirname(FASTQ_DIR), "pipeline_v0", "run_info.json")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        info = {}
+        if os.path.isfile(path):
+            with open(path) as fh:
+                info = json.load(fh)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if status is None:
+            info = {"run": _CURRENT_RUN_TAG, "pipeline_version": PIPELINE_VERSION,
+                    "git_commit": PIPELINE_COMMIT, "modifie_hors_git": PIPELINE_VERSION.endswith("-dirty"),
+                    "pipeline_dir": PIPELINE_DIR,
+                    "configfile": workflow.configfiles[0] if workflow.configfiles else "",
+                    "debut": now}
+        else:
+            info.update({"fin": now, "statut": status})
+        with open(path, "w") as fh:
+            json.dump(info, fh, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[WARN] run_info.json non écrit : {e}")
+
 
 ##─────────────────────────────────────────────────────────────────────────────
 ## Wildcard constraints globaux
@@ -559,13 +612,18 @@ def send_email(subject, body):
 # (scripts/send_results_to_sitatst.py), pas par le pipeline.
 
 
+onstart:
+    _write_run_info()
+
 onsuccess:
+    _write_run_info('succès')
     send_email(
-        subject=f'✅ [{_CURRENT_RUN_TAG}] Pipeline RNA-seq terminé avec succès',
+        subject=f'✅ [{_CURRENT_RUN_TAG}] Pipeline RNA-seq {PIPELINE_VERSION} terminé avec succès',
         body=(
             f'Le pipeline a terminé sans erreur le '
             f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.\n'
-            f'Run : {_CURRENT_RUN_TAG}'
+            f'Run : {_CURRENT_RUN_TAG}\n'
+            f'Version du pipeline : {PIPELINE_VERSION}'
         )
     )
 
@@ -592,4 +650,5 @@ onerror:
             'Aucun log structuré trouvé — consultez la sortie Snakemake.\n'
             'Répertoire de logs : log/'
         )
-    send_email(subject=f'❌ [{_CURRENT_RUN_TAG}] Pipeline RNA-seq — ERREUR', body=body)
+    _write_run_info('échec')
+    send_email(subject=f'❌ [{_CURRENT_RUN_TAG}] Pipeline RNA-seq {PIPELINE_VERSION} — ERREUR', body=body)

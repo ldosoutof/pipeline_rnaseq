@@ -198,6 +198,10 @@ def _process_and_save_sample(args):
         drop = DROP_OUTRIDER
 
     out_cols = [c for c in ordered if c in df.columns and c not in drop]
+    version = os.environ.get('RNASEQ_PIPELINE_VERSION', '')
+    if version:                       # traçabilité : version du pipeline sur chaque ligne
+        df = df.assign(pipeline_version=version)
+        out_cols.append('pipeline_version')
     df[out_cols].to_csv(filepath, sep='\t', index=False)
     return filepath, len(df), sample_short
 
@@ -746,6 +750,9 @@ class RNASeqProcessorPerSample:
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for fp in files_list:
                 zf.write(fp, Path(fp).name)
+            version = os.environ.get('RNASEQ_PIPELINE_VERSION', '')
+            if version:
+                zf.writestr('PIPELINE_VERSION.txt', version + '\n')
         logger.info(f"ZIP cree : {zip_path}")
         return zip_path
 
