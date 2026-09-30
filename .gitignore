@@ -1,0 +1,41 @@
+# --- Snakemake, environnements, conteneurs ---
+.snakemake/
+conda_env/
+singularity_img/
+*.sif
+# --- Python ---
+__pycache__/
+*.pyc
+.pytest_cache/
+# --- Données, références téléchargées et sorties de runs (jamais dans git) ---
+data/
+test/
+test_downloads/
+20*_RUN*/
+*.fastq.gz
+*.bam
+*.bai
+*.cram
+*.vcf.gz
+*.tbi
+log/
+logs/
+benchmarks/
+nohup*.out
+*.log
+{log.run_info}
+verif_ecarts_*.txt
+# --- Secrets ---
+.env
+secrets/
+*_pass
+.sudo_pass
+*token*
+# --- Sauvegardes et fichiers temporaires ---
+*.bak*
+*.avant_*
+*~
+.nfs*
+rules/archive/
+# --- Archives produites par make_release.sh ---
+pipeline-*.zip
