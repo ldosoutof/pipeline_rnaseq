@@ -10,6 +10,9 @@ impact sur les résultats.
 - **Un seul chemin d'ingestion des métriques** : le watcher de sitatst, au retour des résultats. Le pipeline ne pousse plus vers le Pushgateway (`push_metrics.py`) et n'écrit plus dans aucune base QC : ni localement (`qc_db`, règle `generate_metrics`), ni à distance (`update_db.py` lancé après la synchronisation). Le transfert des résultats vers sitatst et le contrôle d'intégrité sont conservés. Impact sur les résultats : aucun (fichiers produits identiques).
 - Configuration : clés `qc_db`, `prometheus_*`, `sync_sitatst.update_db`, `remote_db` et `remote_update_db_script` retirées de `config_template.yml`, `site_paths.yml` et `site_paths_template.yml`.
 
+### Corrigé
+- `pipeline_versions.tsv` : version de featureCounts détectée (`featureCounts -v` affiche une ligne vide avant la version) ; si un outil ne renvoie pas sa version à l'exécution (cas de MultiQC), elle est lue dans les métadonnées du paquet conda et marquée « via conda-meta ». Clôt le reliquat de l'écart NC-01. Impact sur les résultats : aucun.
+
 ### Retiré
 - `monitoring/` (Pushgateway, Prometheus, Grafana), `envs/dashboard_env.yml`, `scripts/update_db.py`, `scripts/backfill_db.py` : ils reçoivent ou affichent les métriques et rejoignent le dépôt du dashboard.
 

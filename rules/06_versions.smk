@@ -28,7 +28,7 @@ rule save_pipeline_versions:
             "samtools":   get_version_from_env("samtools --version | head -1 | cut -d' ' -f2"),
             "htseq-count":get_version_from_env("htseq-count --version | head -1 | cut -d' ' -f2"),
             "kallisto":   get_version_from_env("kallisto version"),
-            "featureCounts": get_version_from_env("featureCounts -v 2>&1 | head -1"),
+            "featureCounts": get_version_from_env("featureCounts -v 2>&1 | grep -m1 -i 'featurecounts v'"),
             "Rscript":    get_version_from_env("Rscript --version | head -1"),
             "OUTRIDER":   get_r_package_version("OUTRIDER"),
             "FRASER":     get_r_package_version("FRASER"),

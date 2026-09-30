@@ -129,6 +129,28 @@ def _envs_with(rel_path):
 
 _VERSION_CACHE = {}
 
+# Paquet conda qui fournit chaque binaire (repli sur conda-meta quand l'outil ne
+# renvoie pas sa version à l'exécution : lenteur au démarrage, locale, format).
+_CONDA_PKG = {
+    'featureCounts': 'subread', 'htseq-count': 'htseq', 'STAR': 'star',
+    'Rscript': 'r-base', 'fastqc': 'fastqc', 'fastp': 'fastp',
+    'samtools': 'samtools', 'kallisto': 'kallisto', 'mosdepth': 'mosdepth',
+    'multiqc': 'multiqc', 'picard': 'picard',
+}
+
+
+def _conda_meta_version(env_dir, pkg):
+    """Version d'un paquet lue dans <env>/conda-meta/<paquet>-<version>-<build>.json."""
+    import json
+    for meta in sorted((env_dir / 'conda-meta').glob(f'{pkg}-*.json')):
+        try:
+            d = json.loads(meta.read_text())
+        except Exception:
+            continue
+        if d.get('name') == pkg and d.get('version'):
+            return d['version']
+    return ''
+
 def get_version_from_env(cmd, env_yml=None):
     """
     Version d'un outil : exécute `cmd` dans l'environnement conda qui contient
@@ -162,6 +184,13 @@ def get_version_from_env(cmd, env_yml=None):
             print(f'[WARN] échec de `{cmd}` dans {env_dir.name} : {e}')
         if v and v not in versions:
             versions.append(v)
+    if not versions:
+        # repli : métadonnées du paquet conda (source indiquée pour la traçabilité)
+        pkg = _CONDA_PKG.get(bin_name, bin_name.lower())
+        for env_dir in envs:
+            v = _conda_meta_version(env_dir, pkg)
+            if v and f'{v} (via conda-meta)' not in versions:
+                versions.append(f'{v} (via conda-meta)')
     if not versions:
         res = f'{bin_name}: version not found'
     elif len(versions) == 1:

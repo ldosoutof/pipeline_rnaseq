@@ -1,4 +1,4 @@
-TOOL_VERSIONS["featurecounts"] = get_version_from_env("featureCounts -v 2>&1 | head -1")
+TOOL_VERSIONS["featurecounts"] = get_version_from_env("featureCounts -v 2>&1 | grep -m1 -i 'featurecounts v'")
 
 rule featurecounts_gene:
     """
