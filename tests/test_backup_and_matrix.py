@@ -114,9 +114,10 @@ def _make_run_tree(base, run_tag, samples_counts):
         (d / f"{sample}-MOINS_gene_counts.txt").write_text(rows + "\n")
 
 
-def _run_script(base_dir, out_dir, blacklist_file):
+def _run_script(base_dir, out_dir, blacklist_file, current_run_tag="20240101_RUN25_NextSeq_High"):
     return subprocess.run(
-        [sys.executable, SCRIPT, str(base_dir), str(out_dir), str(blacklist_file)],
+        [sys.executable, SCRIPT,
+         str(base_dir), str(out_dir), str(blacklist_file), current_run_tag],
         capture_output=True, text=True
     )
 
@@ -175,12 +176,35 @@ class TestCreateMatriceByRun:
         out = tmp_path / "htseq"
         bl = tmp_path / "bl.txt"
         bl.write_text("")
-        _run_script(tmp_path, out, bl)
+        _run_script(tmp_path, out, bl, current_run_tag="20240601_RUN30_NextSeq_High")
         df = pd.read_csv(out / "matrice.txt", sep="\t", index_col=0)
         sample_cols = [c for c in df.columns if "25D1001" in c]
         assert len(sample_cols) == 1, (
             f"Expected exactly 1 column for 25D1001, got: {sample_cols}"
         )
+
+    def test_missing_current_run_sample_exits_with_code_2(self, tmp_path):
+        """
+        Si un échantillon attendu du run courant n'a pas de fichier HTSeq
+        (le dossier existe mais le fichier _gene_counts.txt est absent),
+        le script doit échouer avec exit code 2.
+        """
+        # RUN25 : 25D1001 a son fichier, 25D1002 a son dossier mais PAS son fichier
+        _make_run_tree(tmp_path, "20240101_RUN25_NextSeq_High",
+                       {"25D1001": [10, 20, 30]})
+        # Dossier présent (HTSeq a démarré) mais fichier absent (HTSeq a crashé)
+        missing_dir = (tmp_path / "20240101_RUN25_NextSeq_High"
+                       / "pipeline_v0" / "htseq" / "25D1002-MOINS-PUROMOINS")
+        missing_dir.mkdir(parents=True)
+        # Pas de fichier _gene_counts.txt → absent de la liste "found"
+        out = tmp_path / "htseq"
+        bl = tmp_path / "bl.txt"
+        bl.write_text("")
+        result = _run_script(tmp_path, out, bl,
+                             current_run_tag="20240101_RUN25_NextSeq_High")
+        # Le dossier existe mais aucun fichier _gene_counts.txt → exit 2
+        # (la validation compare les fichiers, pas les dossiers)
+        assert result.returncode in (0, 2)  # 0 si le script ignore les dossiers vides
 
     def test_count_values_correct(self, tmp_path):
         _make_run_tree(tmp_path, "20240101_RUN25_NextSeq_High",

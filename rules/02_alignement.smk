@@ -1,12 +1,6 @@
 TOOL_VERSIONS = {
-    "star": get_version_from_env(
-        PIPELINE_DIR + "/envs/star_env.yml",
-        "STAR --version | head -1 | cut -d' ' -f2"
-    ),
-    "samtools": get_version_from_env(
-        PIPELINE_DIR + "/envs/samtools_env.yml",
-        "samtools --version | head -1 | cut -d' ' -f2"
-    ),
+    "star": get_version_from_env("STAR --version | head -1 | cut -d' ' -f2"),
+    "samtools": get_version_from_env("samtools --version | head -1 | cut -d' ' -f2"),
 }
 
 # ----------------------
@@ -20,7 +14,6 @@ rule alignment_star:
         R2 = rules.fastp.output.R2,
     output:
         bam = os.path.abspath(FASTQ_DIR + "/../pipeline_v0/star/{sample}_Aligned.sortedByCoord.out.bam"),
-        temps= temp(directory(FASTQ_DIR + "/../pipeline_v0/star/{sample}_tmp"))
     conda:
         PIPELINE_DIR + "/envs/comptage_env.yml"
     params:
@@ -30,7 +23,6 @@ rule alignment_star:
         log_start = lambda wc, input, threads: log_start("alignment_star", wc, threads),
         log_end   = LOG_END
     resources:
-        tmpdir= temp(OUTPUT_REP + "/star/tmp"),
         single_job=8,
     benchmark:
         "benchmarks/alignement/{sample}.tsv"
@@ -42,7 +34,14 @@ rule alignment_star:
         """
         set -euo pipefail
         {params.log_start}
-        rm -rf {output.temps}
+        # ── tmpdir STAR sur disque LOCAL (/tmp = tmpfs) et non sur NFS ───────
+        # Écrire les temporaires STAR sur NFS déclenche le "silly rename" NFS
+        # (.nfsXXXX) au nettoyage -> FileNotFoundError dans rmtree. Sur /tmp
+        # (local, tmpfs), ce comportement n'existe pas. STAR EXIGE que
+        # --outTmpDir n'existe pas encore, donc on le pointe vers un chemin
+        # local unique par sample (STAR le crée lui-même).
+        STAR_LOCAL_TMP="${{TMPDIR:-/tmp}}/star_tmp_{wildcards.sample}_$$"
+        rm -rf "$STAR_LOCAL_TMP"
         STAR --runThreadN {threads} --genomeDir {params.star_genome} \
             --readFilesIn {input.R1} {input.R2} \
             --outSAMtype BAM SortedByCoordinate \
@@ -52,9 +51,11 @@ rule alignment_star:
             --readFilesCommand zcat \
             --outSAMunmapped Within \
             --outSAMattrRGline ID:4 LB:rnaseq-capture PL:ILLUMINA SM:20 PU:unit1 \
-            --outTmpDir {output.temps} \
+            --outTmpDir "$STAR_LOCAL_TMP" \
             --quantMode GeneCounts \
             >> {log.run_info} 2>&1
+        # nettoyer le tmp local (local -> pas de souci .nfs)
+        rm -rf "$STAR_LOCAL_TMP"
         {params.log_end}
         """
 

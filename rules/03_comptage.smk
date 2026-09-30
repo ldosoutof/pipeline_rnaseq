@@ -10,14 +10,10 @@ DATE = datetime.now().strftime("%Y-%m-%d")
 # TOOL VERSION DICTIONARY
 # ----------------------
 TOOL_VERSIONS = {
-    "htseq": get_version_from_env(PIPELINE_DIR + "/envs/htseq_env.yml",
-                                  "htseq-count --version | head -1 | cut -d' ' -f2"),
-    "kallisto": get_version_from_env(PIPELINE_DIR + "/envs/count_env.yml",
-                                     "kallisto version"),
-    "tx2gene": get_version_from_env(PIPELINE_DIR + "/envs/htseq_env.yml",
-                                    "Rscript --version | head -1"),
-    "tpm": get_version_from_env(PIPELINE_DIR + "/envs/htseq_env.yml",
-                                "Rscript --version | head -1")
+    "htseq": get_version_from_env("htseq-count --version | head -1 | cut -d' ' -f2"),
+    "kallisto": get_version_from_env("kallisto version"),
+    "tx2gene": get_version_from_env("Rscript --version | head -1"),
+    "tpm": get_version_from_env("Rscript --version | head -1")
 }
 
 # ----------------------
@@ -66,12 +62,13 @@ rule matrix:
     output:
         matrix = FASTQ_DIR + "/../pipeline_v0/htseq/matrice.txt"
     params:
-        out_dir   = FASTQ_DIR + "/../pipeline_v0/htseq",
-        blacklist = outrider_blacklist,
-        prod_root = lambda wc: PROD_ROOT,
-        scripts   = PIPELINE_DIR,
-        log_start = lambda wc, input, threads: log_start("matrix", wc, threads),
-        log_end   = LOG_END
+        out_dir         = FASTQ_DIR + "/../pipeline_v0/htseq",
+        blacklist       = outrider_blacklist,
+        prod_root       = lambda wc: PROD_ROOT,
+        current_run_tag = _CURRENT_RUN_TAG,
+        scripts         = PIPELINE_DIR,
+        log_start       = lambda wc, input, threads: log_start("matrix", wc, threads),
+        log_end         = LOG_END
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
     log:
@@ -88,7 +85,7 @@ rule matrix:
             touch "$BL"
         fi
         python {params.scripts}/scripts/create_matrice_by_run.py \
-            {params.prod_root} {params.out_dir} "$BL" >> {log.run_info} 2>&1
+            {params.prod_root} {params.out_dir} "$BL" "{params.current_run_tag}" >> {log.run_info} 2>&1
         {params.log_end}
         """
 
@@ -129,7 +126,8 @@ rule kallistoBed:
 
 rule kallisto2gene:
     """
-    Convert Ensembl gene IDs to gene names
+    Aggregate Kallisto transcript-level estimates to gene level via tximport.
+    Writes counts to the path declared in output: (passed explicitly as arg 3).
     """
     version: TOOL_VERSIONS["tx2gene"]
     input:
@@ -139,7 +137,8 @@ rule kallisto2gene:
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
     params:
-        scripts = PIPELINE_DIR,
+        scripts   = PIPELINE_DIR,
+        gtf       = GTF,
         log_start = lambda wc, input, threads: log_start("kallisto2gene", wc, threads),
         log_end   = LOG_END
     log:
@@ -152,7 +151,8 @@ rule kallisto2gene:
         """
         set -euo pipefail
         {params.log_start}
-        Rscript {params.scripts}/scripts/tx2gene.R {input.h5} >> {log.run_info} 2>&1
+        Rscript {params.scripts}/scripts/tx2gene.R \
+            {input.h5} {params.gtf} {output.gene_level} >> {log.run_info} 2>&1
         {params.log_end}
         """
 
@@ -170,11 +170,13 @@ rule matrix_tpm:
     conda:
         PIPELINE_DIR + "/envs/htseq_env.yml"
     params:
-        scripts = PIPELINE_DIR,
-        matrix_dir = TPM,
-        gtf = GTF,
-        log_start = lambda wc, input, threads: log_start("matrix_tpm", wc, threads),
-        log_end   = LOG_END
+        scripts         = PIPELINE_DIR,
+        matrix_dir      = FASTQ_DIR + "/../pipeline_v0/kallisto_bed",
+        gtf             = GTF,
+        fastq_parent    = FASTQ_DIR + "/..",
+        current_run_tag = _CURRENT_RUN_TAG,
+        log_start       = lambda wc, input, threads: log_start("matrix_tpm", wc, threads),
+        log_end         = LOG_END
     log:
         run_info = "log/matrixtpm/log.txt",
         time = "log/matrixtpm/time.txt"
@@ -185,7 +187,8 @@ rule matrix_tpm:
         """
         set -euo pipefail
         {params.log_start}
+        mkdir -p {params.matrix_dir}
         Rscript {params.scripts}/scripts/create_matrice_tpm_gene_by_run.R \
-            FASTQ_DIR/../ {params.matrix_dir}/ {params.gtf} >> {log.run_info} 2>&1
+            {params.fastq_parent} {params.matrix_dir} {params.gtf} "{params.current_run_tag}" >> {log.run_info} 2>&1
         {params.log_end}
         """

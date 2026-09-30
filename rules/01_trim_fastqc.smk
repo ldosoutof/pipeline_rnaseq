@@ -1,9 +1,7 @@
 # --- fetch tool versions at parse time ---
 TOOL_VERSIONS = {
-    "fastqc": get_version_from_env(PIPELINE_DIR + "/envs/fastqc_env.yml",
-                                   "fastqc --version | head -1 | cut -d' ' -f2"),
-    "fastp": get_version_from_env(PIPELINE_DIR + "/envs/fastp_env.yml",
-                                  "fastp --version"),
+    "fastqc": get_version_from_env("fastqc --version | head -1 | cut -d' ' -f2"),
+    "fastp": get_version_from_env("fastp --version"),
 }
 
 # ----------------------
@@ -16,14 +14,14 @@ rule fastqc_report:
         R1 = FASTQ_DIR + "/{sample}_R1.fastq.gz",
         R2 = FASTQ_DIR + "/{sample}_R2.fastq.gz"
     output:
-        report_dir = directory(FASTQ_DIR + "/../pipeline_v0/fastqc/{sample}"),
-        R1=FASTQ_DIR + "/../pipeline_v0/fastqc/{sample}/{sample}_R1_fastqc.html",
-        R2=FASTQ_DIR + "/../pipeline_v0/fastqc/{sample}/{sample}_R2_fastqc.html"
+        report_dir = directory(FASTQ_DIR + "/../pipeline_v0/metrics/qc/fastqc/{sample}"),
+        R1 = FASTQ_DIR + "/../pipeline_v0/metrics/qc/fastqc/{sample}/{sample}_R1_fastqc.html",
+        R2 = FASTQ_DIR + "/../pipeline_v0/metrics/qc/fastqc/{sample}/{sample}_R2_fastqc.html"
     conda:
         PIPELINE_DIR + "/envs/fastqc_env.yml"
     log:
         run_info = "log/fastqc/{sample}/log.txt",
-        time = "log/fastqc/{sample}/time.txt"
+        time     = "log/fastqc/{sample}/time.txt"
     threads: 8
     params:
         log_start = lambda wc, input, threads: log_start("fastqc_report", wc, threads),
@@ -32,6 +30,7 @@ rule fastqc_report:
         """
         set -euo pipefail
         {params.log_start}
+        mkdir -p {output.report_dir}
         fastqc -o {output.report_dir} -t {threads} {input.R1} {input.R2} >> {log.run_info} 2>&1
         {params.log_end}
         """
@@ -46,15 +45,15 @@ rule fastp:
         R1 = FASTQ_DIR + "/{sample}_R1.fastq.gz",
         R2 = FASTQ_DIR + "/{sample}_R2.fastq.gz"
     output:
-        R1 = temp(FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}_R1_trimmed.fastq.gz"),
-        R2 = temp(FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}_R2_trimmed.fastq.gz"),
-        html = FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}/report.html",
-        json = FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}/report.json"
+        R1   = temp(FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}_R1_trimmed.fastq.gz"),
+        R2   = temp(FASTQ_DIR + "/../pipeline_v0/trimmed_fastq/{sample}_R2_trimmed.fastq.gz"),
+        html = FASTQ_DIR + "/../pipeline_v0/metrics/qc/fastp/{sample}/report.html",
+        json = FASTQ_DIR + "/../pipeline_v0/metrics/qc/fastp/{sample}/report.json"
     params:
-        cut_right_size = 10,
-        cut_right_mean_quality = 15,
+        cut_right_size          = 10,
+        cut_right_mean_quality  = 15,
         qualified_quality_phred = 15,
-        minimum_read_length = 30,
+        minimum_read_length     = 30,
         log_start = lambda wc, input, threads: log_start("fastp", wc, threads),
         log_end   = LOG_END
     threads: 2
@@ -62,7 +61,7 @@ rule fastp:
         PIPELINE_DIR + "/envs/fastp_env.yml"
     log:
         run_info = "log/fastp/{sample}/fastp.log",
-        time = "log/fastp/{sample}/fastp_time.txt"
+        time     = "log/fastp/{sample}/fastp_time.txt"
     shell:
         """
         set -euo pipefail
@@ -97,14 +96,14 @@ rule fastqc_trim_report:
         R1 = rules.fastp.output.R1,
         R2 = rules.fastp.output.R2
     output:
-        report_dir = directory(FASTQ_DIR + "/../pipeline_v0/fastqc_trim/{sample}"),
-        R1=FASTQ_DIR + "/../pipeline_v0/fastqc_trim/{sample}/{sample}_R1_trimmed_fastqc.html",
-        R2=FASTQ_DIR + "/../pipeline_v0/fastqc_trim/{sample}/{sample}_R2_trimmed_fastqc.html"
+        report_dir = directory(FASTQ_DIR + "/../pipeline_v0/metrics/qc/fastqc_trim/{sample}"),
+        R1 = FASTQ_DIR + "/../pipeline_v0/metrics/qc/fastqc_trim/{sample}/{sample}_R1_trimmed_fastqc.html",
+        R2 = FASTQ_DIR + "/../pipeline_v0/metrics/qc/fastqc_trim/{sample}/{sample}_R2_trimmed_fastqc.html"
     conda:
         PIPELINE_DIR + "/envs/fastqc_env.yml"
     log:
         run_info = "log/fastqc_trim/{sample}/log.txt",
-        time = "log/fastqc_trim/{sample}/time.txt"
+        time     = "log/fastqc_trim/{sample}/time.txt"
     threads: 8
     params:
         log_start = lambda wc, input, threads: log_start("fastqc_trim_report", wc, threads),
@@ -113,7 +112,7 @@ rule fastqc_trim_report:
         """
         set -euo pipefail
         {params.log_start}
+        mkdir -p {output.report_dir}
         fastqc -o {output.report_dir} -t {threads} {input.R1} {input.R2} >> {log.run_info} 2>&1
         {params.log_end}
         """
-

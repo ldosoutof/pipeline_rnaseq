@@ -1,35 +1,47 @@
-### example : for i in /data2/Exome_analysis_BC/Server_S_exome/MAGNIS/Runs_nextseq/*RNASEQ/pipeline_v0/kallisto_strand;do echo $i; for j in $i/*; do echo $j;sudo /home/ldosouto/miniconda3/envs/fraser/bin/Rscript tx2gene.R $j/abundance.h5; done; done  ###
+# tx2gene.R
+# Usage: Rscript tx2gene.R <abundance.h5> <gtf_file> <output_counts.tsv>
 
-# Check if the correct number of command line arguments is provided
-if (length(commandArgs(trailingOnly = TRUE)) != 1) {
-	  stop("Please provide the abundance file path as a command line argument.")
+args <- commandArgs(trailingOnly = TRUE)
+if (length(args) != 3) {
+  stop("Usage: Rscript tx2gene.R <abundance_h5> <gtf_file> <output_counts.tsv>")
 }
 
-# Retrieve the abundance file path from command line argument
-abundance_file <- commandArgs(trailingOnly = TRUE)[1]
+abundance_file <- args[1]
+gtf_file       <- args[2]
+output_counts  <- args[3]
 
-# Check if the file exists
 if (!file.exists(abundance_file)) {
-	  stop("The specified abundance file does not exist.")
+  stop(paste("Abundance file not found:", abundance_file))
+}
+if (!file.exists(gtf_file)) {
+  stop(paste("GTF file not found:", gtf_file))
 }
 
-# Extracting directory path
-sample_path <- dirname(abundance_file)
-print(sample_path)  # This will print the directory path
-
-# Libraries loading
-library(GenomicFeatures)
 library(tximport)
-library(rhdf5)
+library(GenomicFeatures)
 
-# Creating a transcript database
-txdb <- makeTxDbFromGFF(file = "/dataref/bank/human/annotation/GRCh38/ensembl/current/Homo_sapiens.GRCh38.106.gtf")
-k <- keys(txdb, keytype = "TXNAME")
+sample_path <- dirname(abundance_file)
+
+# Build tx2gene mapping from GTF
+txdb    <- makeTxDbFromGFF(file = gtf_file)
+k       <- keys(txdb, keytype = "TXNAME")
 tx2gene <- select(txdb, k, "GENEID", "TXNAME")
 
-# Run tximport for gene-level counts
-txi_gene <- tximport(abundance_file, type = "kallisto", tx2gene = tx2gene, ignoreTxVersion = TRUE)
+# Import kallisto data
+files        <- file.path(sample_path, "abundance.h5")
+names(files) <- basename(sample_path)
 
-# Return the gene-level counts or save them to a file
-#abundance = tpm
-write.table(txi_gene$abundance, file = paste0(sample_path, "/abundance_gene_level_counts.tsv"), sep = "\t", quote = FALSE)
+txi_gene <- tximport(files, type = "kallisto", tx2gene = tx2gene,
+                     ignoreTxVersion = TRUE)
+
+# Save gene-level TPM (path owned by Snakemake output:)
+# CORRECTIF : on écrit txi_gene$abundance (= TPM), PAS txi_gene$counts.
+# L'ancien pipeline écrivait le TPM ici ; le calcul des metrics attend du TPM
+# (seuil "TPM > 10", colonne HBA_total en TPM). Écrire $counts gonflait les
+# valeurs (~7x, variable selon la profondeur) et faussait HBA_total et %DI_green.
+dir.create(dirname(output_counts), recursive = TRUE, showWarnings = FALSE)
+write.table(txi_gene$abundance,
+            file  = output_counts,
+            sep   = "\t", quote = FALSE)
+
+cat("✅ tx2gene done:", output_counts, "\n")

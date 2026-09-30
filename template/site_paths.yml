@@ -1,0 +1,94 @@
+# =============================================================================
+# site_paths.yml — Chemins spécifiques à votre installation
+# =============================================================================
+# Ce fichier est chargé par preprocess.py pour pré-remplir le config.yml
+# généré à chaque nouveau run.
+#
+# À remplir UNE SEULE FOIS à l'installation du pipeline.
+# Ne PAS versionner ce fichier (ajoutez-le à .gitignore).
+#
+# Les clés ici écrasent les valeurs de config_template.yml.
+# Seules les clés stables (références, matrices, blacklist...) doivent figurer
+# ici. Les clés spécifiques au run (samples, fastq_dir, outputDir) sont
+# renseignées automatiquement par preprocess.py.
+# =============================================================================
+
+# --- Répertoire racine de tous les runs --------------------------------------
+runs_dir: "/datawork2/genetique/RNASeq/diag/prod/"
+
+# --- Référentiels génomiques (GRCh38) ----------------------------------------
+genome:       "/dataref/bank/human/genome/GRCh38/ensembl/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+star_genome:  "/dataref/bank/human/genome/GRCh38/STAR/"
+kallisto_idx: "/dataref/bank/human/genome/GRCh38/kallisto/kallisto_bed/transcripts_bed.idx"
+rsem_genome:  "/dataref/bank/human/genome/rsem/hg38"
+gtfFile:      "/dataref/bank/human/annotation/GRCh38/ensembl/current/Homo_sapiens.GRCh38.106.gtf"
+gtf_refseq:   "/dataref/bank/human/annotation/GRCh38/gencode/v49/gencode.v49.basic.annotation.woreadthrough.woretainedintron.nochr.gtf"
+
+# --- BED files ---------------------------------------------------------------
+bed:      "/dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Covered_wo_chr.bed"
+padded:   "/dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Padded_wo_chr.bed"
+di_bed:   "/dataref/bank/human/bed/DI_green_300425.tsv"
+rseq_bed: "/dataref/bank/human/bed/rseqc_hg38.bed"
+
+# --- Fichiers d'annotation ---------------------------------------------------
+panelapp:   "/dataref/bank/human/annotation/GRCh38/current/DI_green.tsv"
+hpo:        "/dataref/bank/human/annotation/GRCh38/hpo/phenotype.hpoa"
+pheno:      "/dataref/bank/human/annotation/GRCh38/hpo/genes_to_phenotype.txt"
+pli:        "/dataref/bank/human/annotation/GRCh38/PLI.vcf"
+gnomad:     "/dataref/bank/human/annotation/GRCh38/gnomad/gnomad_v4_by_gene.tsv"
+mendeliome: "/dataref/bank/human/annotation/GRCh38/mendeliome/mendeliome_australia.json"
+
+
+# --- Matrices de comptage (historique multi-run) -----------------------------
+matrices:    "/datawork2/genetique/RNASeq/diag/matrices_comptage/"
+matrice_tpm: "/datawork2/genetique/RNASeq/diag/matrices_comptage_tpm_gene/"
+geneid_map:  "/datawork2/genetique/RNASeq/diag/prod/geneid_to_ensg.tsv"
+
+# --- FRASER ------------------------------------------------------------------
+fraser_count:       "/datawork2/genetique/RNASeq/diag/prod/Fraser2_2/"
+fraser_count_hyper: "/datawork2/genetique/RNASeq/diag/prod/Fraser2_2_hyper/"
+
+# --- Blacklist unifiée -------------------------------------------------------
+blacklist: "/datawork2/genetique/RNASeq/diag/prod/blacklist.tsv"
+
+# --- Fichier Magnis (optionnel — enrichissement ID_SPICE) --------------------
+magnis_file: "/datawork2/genetique/RNASeq/diag/prod/Results_LymphoRNA_Magnis_NS.xlsx"
+
+# --- DeepVariant (règle 07_variantCalling_bis) --------------------------------
+sudo_password_file: "/datawork2/genetique/RNASeq/diag/prod/.sudo_pass"
+chrx_bed:           "/dataref/bank/human/bed/SureSelect_V8/S33266340_Padded_wo_chr_onlyX.bed"
+g1000_chrx:         "/dataref/bank/human/annotation/GRCh38/1000G/ALL.chrX.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz"
+gnomad_chrx:        "/dataref/bank/human/annotation/GRCh38/gnomad/gnomad.genomes.v3.1.2.sites.chrX.vcf.bgz"
+docker_mounts:      "/datawork2:/datawork2 -v /dataref:/dataref"
+docker_workdir:     "/datawork2"
+
+# --- Contrôle positif biais X (optionnel — à renseigner si disponible) ------
+x_bias_control_vaf:   ""
+x_bias_control_label: ""
+
+# --- Base de données QC SQLite -----------------------------------------------
+qc_db: ""
+
+# --- Snakemake binary --------------------------------------------------------
+snakemake_bin: "/appli/miniconda3/envs/snakemake/bin/snakemake"
+
+# --- Prometheus --------------------------------------------------------------
+prometheus_gateway:          "http://localhost:9091"
+prometheus_gateway_user:     ""
+prometheus_gateway_password: ""
+prometheus_fallback_dir:     ""
+
+# --- Notifications mail -------------------------------------------------------
+smtp_host: "172.27.162.183"
+smtp_port: 25
+mail_from: "laura.dosoutoferreira@chu-nantes.fr"
+mail_to:
+  - "laura.dosoutoferreira@chu-nantes.fr"
+
+# --- Seuils d'alerte QC ------------------------------------------------------
+warn_max_dup:          40.0
+warn_max_out_hyper:    500
+warn_max_fraser_hyper: 1000
+warn_max_hba_total:    5
+
+

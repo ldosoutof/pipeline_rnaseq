@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 import argparse
 import numpy as np
@@ -19,7 +20,8 @@ parser.add_argument('-o', '--omim', required=True)
 parser.add_argument('-p', '--pli', required=True)
 parser.add_argument('-m', '--hpo', required=True)
 parser.add_argument('-oR', '--outrider', required=True)
-parser.add_argument('--output', required=True, help='Path to the output file')
+parser.add_argument('--output',  required=True,  help='Path to the output file')
+parser.add_argument('--magnis',  default='',      help='Chemin vers le fichier Excel Magnis (optionnel, pour enrichissement ID_SPICE)')
 
 args = parser.parse_args()
 
@@ -62,10 +64,15 @@ if 'rawCounts' in outrider.columns and 'rawcounts' not in outrider.columns:
     outrider = outrider.rename(columns={'rawCounts': 'rawcounts'})
 
 def normalize_outrider_sample_id(s):
+    """Extract core sample ID from any known format:
+      25D2693.STEMC.PUROMOINS.AVITI  (R output, dots)
+      25D2693-STEMC-PUROMOINS-AVITI  (raw name, dashes)
+      X25D2693                        (older R output with X prefix)
+    """
     s = str(s)
     if s.startswith('X'):
         s = s[1:]
-    return s.split('.')[0]
+    return re.split(r'[.\-]', s)[0]
 
 outrider['sampleID_norm'] = outrider['sampleID'].apply(normalize_outrider_sample_id)
 
@@ -82,9 +89,14 @@ for _, r in outrider_sig.iterrows():
 # Load Excel for ID_SPICE
 # =============================
 
-file_path = '/datawork2/genetique/RNASeq/diag/prod/Results_LymphoRNA_Magnis_NS.xlsx'
-df_magnis = pd.read_excel(file_path, engine='openpyxl')
-df_with_id_spice = df_magnis[df_magnis['ID_SPICE'].notna()]
+_magnis_path = args.magnis
+if _magnis_path and os.path.isfile(_magnis_path):
+    df_magnis = pd.read_excel(_magnis_path, engine='openpyxl')
+    df_with_id_spice = df_magnis[df_magnis['ID_SPICE'].notna()]
+else:
+    if _magnis_path:
+        print(f"[WARN] Fichier Magnis introuvable : {_magnis_path} — ID_SPICE non renseigné")
+    df_with_id_spice = pd.DataFrame(columns=['N° Genno', 'ID_SPICE'])
 
 def get_id_spice(sample_id):
     result = df_with_id_spice[df_with_id_spice['N° Genno'] == sample_id]['ID_SPICE']

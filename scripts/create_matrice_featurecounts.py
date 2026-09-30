@@ -23,7 +23,7 @@ Usage:
         --input_dir  /prod/RUN48/pipeline_v0/featureCounts_gencode/ \\
         --output     /prod/RUN48/pipeline_v0/featureCounts_gencode/matrice_fc.txt \\
         --blacklist  /prod/blacklist_outrider.txt \\
-        --runs_dir   /datawork2/genetique/RNASeq/diag/prod \\
+        --runs_dir   /path/to/runs_dir \\
         [--pattern   "*_gene_cds_counts_ensembl.txt"]
 """
 
@@ -46,13 +46,13 @@ def parse_args():
                    help="Output matrix TSV path")
     p.add_argument("--blacklist",  default="",
                    help="Blacklist file (one sample ID per line, optional)")
-    p.add_argument("--pattern",    default="*_gene_cds_counts_ensembl.txt",
+    p.add_argument("--pattern",    default="*_gene_cds_counts*.txt",
                    help="Glob pattern for count files under each sample folder")
     p.add_argument("--run_filter", default="",
                    help="Restrict to a single run folder name (optional)")
     p.add_argument("--pipeline_dir", default="pipeline_v0",
                    help="Pipeline output subdirectory name (default: pipeline_v0)")
-    p.add_argument("--keywords",   default="MOINS,PUROMINS",
+    p.add_argument("--keywords",   default="MOINS,PUROMOINS",
                    help="Comma-separated keywords — only samples whose folder name "
                         "contains at least one keyword are included (case-insensitive). "
                         "Set to empty string to include all samples.")
@@ -77,8 +77,17 @@ def extract_run_number(run_folder):
 
 
 def shorten_sample_id(sample_id):
-    """25D1001-MOINS → 25D1001  (keep first 7 chars / up to first '-')"""
-    return sample_id.split("-")[0][:7]
+    """
+    Extrait l'ID court depuis n'importe quel format :
+      26D0643                              -> 26D0643
+      26D0643-MOINS                        -> 26D0643
+      25D2693-STEMC-PUROMOINS-AVITI        -> 25D2693
+      25D2693.STEMC.PUROMOINS.AVITI        -> 25D2693  (format R)
+      X26D0643                             -> 26D0643  (ancien R)
+    """
+    import re as _re
+    s = str(sample_id).lstrip('X')
+    return _re.split(r'[.\-]', s)[0]
 
 
 def load_count_file(path):
@@ -115,11 +124,16 @@ def main():
         print("[filter] No keyword filter — including all samples", file=sys.stderr)
 
     # ------------------------------------------------------------------ #
-    # Discover all count files across all runs
+    # Discover all count files across ALL runs (courant + historiques).
+    # CORRECTIF : le scan utilise TOUJOURS le motif "20*_RUN*" pour agréger
+    # toute la cohorte, comme la règle matrix (HTSeq). run_filter ne doit servir
+    # QU'À la validation en aval (vérifier que le run courant est présent), PAS à
+    # restreindre le scan — sinon la matrice ne contient que le run courant
+    # (16 échantillons au lieu de la cohorte complète).
     # ------------------------------------------------------------------ #
     pattern = os.path.join(
         args.runs_dir,
-        args.run_filter if args.run_filter else "20*_RUN*",
+        "20*_RUN*",
         args.pipeline_dir,
         "featureCounts_gencode",
         "*",                  # sample subfolder
@@ -157,25 +171,29 @@ def main():
         # Look for keywords in the full path which includes the original
         # sample name from the featureCounts input BAM.
         if keywords:
-            # Try to find the original BAM path from the count file header
-            # (featureCounts embeds it as a comment on line 1)
-            full_name_found = False
-            try:
-                with open(fpath) as fh:
-                    header = fh.readline()   # e.g. # Program:featureCounts ... BAM path
-                    if any(kw in header.upper() for kw in keywords):
-                        full_name_found = True
-            except Exception:
-                pass
+            # featureCounts embeds the BAM path in its first comment line — search there.
+            # Also check the sample folder name itself (covers cases where the subfolder
+            # keeps the full name, e.g. 25D2693-STEMC-PUROMOINS-AVITI).
+            full_name_found = any(kw in sample_folder.upper() for kw in keywords)
+            if not full_name_found:
+                try:
+                    with open(fpath) as fh:
+                        for _ in range(3):          # check first 3 lines (Program, Command, header)
+                            line = fh.readline()
+                            if any(kw in line.upper() for kw in keywords):
+                                full_name_found = True
+                                break
+                except Exception:
+                    pass
 
             if not full_name_found:
-                print(f"[skip] {short_id} ({sample_folder}) — no keyword match in BAM header",
+                print(f"[skip] {short_id} ({sample_folder}) — no keyword match",
                       file=sys.stderr)
                 continue
 
         run_num = extract_run_number(run_folder)
         if short_id not in best or run_num > best[short_id][0]:
-            best[short_id] = (run_num, fpath)
+            best[short_id] = (run_num, fpath, sample_folder)
 
     if not best:
         print("[ERROR] No samples remaining after blacklist filtering",
@@ -185,12 +203,62 @@ def main():
     print(f"[info] Assembling matrix for {len(best)} samples", file=sys.stderr)
 
     # ------------------------------------------------------------------ #
+    # Validate current-run samples are all present in the matrix.
+    # Historical samples missing on disk (archived runs) are warned and
+    # skipped.  But samples from the CURRENT run must never be absent —
+    # that would mean featurecounts_gene failed silently.
+    # ------------------------------------------------------------------ #
+    current_run = args.run_filter   # non-empty only when called for current run
+    missing_historical = []
+    missing_current    = []
+
+    for sid, (rnum, fp, sample_folder) in list(best.items()):
+        if not os.path.exists(fp):
+            run_folder = next(
+                (p for p in Path(fp).parts if re.match(r"20\d{6}_RUN\d+", p)), ""
+            )
+            if current_run and run_folder == current_run:
+                missing_current.append((sid, fp))
+            else:
+                missing_historical.append((sid, fp))
+            del best[sid]
+
+    # Historical missing → warn only (run may have been archived)
+    if missing_historical:
+        print(
+            f"[WARN] {len(missing_historical)} historical sample(s) have no featureCounts "
+            "file on disk (run may be archived) — excluded from matrix:",
+            file=sys.stderr
+        )
+        for sid, fp in missing_historical:
+            print(f"  [ARCHIVED] {sid}: {fp}", file=sys.stderr)
+
+    # Current-run missing → hard error: featurecounts_gene must have failed silently
+    if missing_current:
+        print(
+            f"[ERROR] {len(missing_current)} sample(s) from the CURRENT run ({current_run}) "
+            "are missing their featureCounts file.\n"
+            "  This means featurecounts_gene or map_refseq_to_ensembl did not run for them.\n"
+            "  Check Snakemake logs under log/featureCounts/<sample>/",
+            file=sys.stderr
+        )
+        for sid, fp in missing_current:
+            print(f"  [MISSING] {sid}: {fp}", file=sys.stderr)
+        sys.exit(2)
+
+    if not best:
+        print("[ERROR] No samples remaining after removing missing files", file=sys.stderr)
+        sys.exit(1)
+
+    # ------------------------------------------------------------------ #
     # Load all count files and assemble matrix
     # ------------------------------------------------------------------ #
     series_list = []
-    for short_id, (run_num, fpath) in sorted(best.items()):
+    for short_id, (run_num, fpath, sample_folder) in sorted(best.items()):
         s = load_count_file(fpath)
-        s.name = short_id
+        # Use full sample name from filename instead of short ID
+        full_name = os.path.basename(fpath).split("_gene_cds_counts")[0]
+        s.name = full_name
         series_list.append(s)
         print(f"  {short_id}: {len(s)} genes  ({fpath})", file=sys.stderr)
 

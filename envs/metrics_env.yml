@@ -20,3 +20,4 @@ dependencies:
           - r-gridextra
           - r-stringr
           - r-ggrepel
+          - graphviz

@@ -10,12 +10,26 @@ library(yaml)
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 2) {
-    stop("Usage: Rscript fraser_newVersion.R <count_dir> <config_file> [hyperparams.yaml]")
+    stop("Usage: Rscript fraser_newVersion.R <count_dir> <config_file> [out_dir] [hyperparams.yaml]")
 }
 
 count_dir   <- args[1]
 config_file <- args[2]
-yaml_file   <- if (length(args) >= 3) args[3] else NULL
+
+# args[3] is out_dir if it looks like a path (contains / or starts with .)
+# args[3] is yaml_file if it ends with .yaml/.yml
+# Supports both old 3-arg form (count_dir config yaml) and new 4-arg form
+# (count_dir config out_dir yaml)
+if (length(args) >= 3 && grepl("\\.(yaml|yml)$", args[3], ignore.case = TRUE)) {
+    yaml_file <- args[3]
+    out_dir   <- count_dir
+} else if (length(args) >= 3) {
+    out_dir   <- args[3]
+    yaml_file <- if (length(args) >= 4) args[4] else NULL
+} else {
+    out_dir   <- count_dir
+    yaml_file <- NULL
+}
 
 # ─────────────────────────────────────────────
 # LOAD CONFIG (YAML or defaults)
@@ -54,12 +68,15 @@ padj_cutoff                  <- as.numeric(cfg$padj_cutoff)
 delta_psi_cutoff             <- as.numeric(cfg$delta_psi_cutoff)
 strip_leading_x              <- as.logical(cfg$strip_leading_x)
 
-# Derive output paths from count_dir
-output_file     <- file.path(count_dir, "fraser_results_aberrant.tsv")
-output_file_all <- file.path(count_dir, "fraser_results_all.tsv")
+# Output paths — written to out_dir (Snakemake-declared paths when called from pipeline,
+# or count_dir for backward-compatible standalone use)
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+output_file     <- file.path(out_dir, "fraser_results_aberrant.tsv")
+output_file_all <- file.path(out_dir, "fraser_results_all.tsv")
 
 cat("=== FRASER standalone run ===\n")
 cat("Count dir              :", count_dir,                      "\n")
+cat("Output dir             :", out_dir,                        "\n")
 cat("Sample config          :", config_file,                    "\n")
 cat("Strand specificity     :", strand_specific,                "\n")
 cat("Min expression         :", min_expression_in_one_sample,   "\n")

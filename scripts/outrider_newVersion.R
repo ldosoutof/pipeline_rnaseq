@@ -58,10 +58,27 @@ cat("Matrix dimensions:", nrow(mat), "genes x", ncol(mat), "samples\n")
 current_samples_env <- Sys.getenv("OUTRIDER_CURRENT_SAMPLES", unset = "")
 if (nchar(current_samples_env) > 0) {
     current_samples  <- strsplit(current_samples_env, ",")[[1]]
-    historical_samples <- setdiff(colnames(mat), current_samples)
+    # Les colonnes de la matrice ont un format LONG (26D0643-ROU-Jul-...-PUROMOINS)
+    # alors que current_samples est au format COURT (26D0643). On normalise les
+    # deux au préfixe court (tout avant le 1er tiret/underscore) avant de comparer.
+    short_id        <- function(x) sub("[-_].*$", "", x)
+    col_short       <- short_id(colnames(mat))
+    cur_short       <- short_id(current_samples)
+    matched_current <- intersect(cur_short, col_short)
+    historical_cols <- colnames(mat)[!(col_short %in% cur_short)]
     cat("Current run samples  :", length(current_samples),  "\n")
-    cat("Historical samples   :", length(historical_samples), "\n")
+    cat("  ...dont présents dans la matrice :", length(matched_current),
+        "/", length(current_samples), "\n")
+    cat("Historical samples   :", length(historical_cols), "\n")
     cat("Total samples in model:", ncol(mat), "\n")
+    # Garde-fou : si AUCUN sample courant ne matche (même après normalisation),
+    # l'appariement d'ID est réellement rompu -> on avertit.
+    if (length(matched_current) == 0L) {
+        warning("AUCUN échantillon du run courant ne correspond aux colonnes de la matrice ",
+                "(même après normalisation au préfixe court). ",
+                "Exemples colonnes : ", paste(head(colnames(mat), 3), collapse = ", "),
+                " | attendus : ", paste(head(current_samples, 3), collapse = ", "))
+    }
 } else {
     cat("Total samples in model:", ncol(mat), "\n")
 }
@@ -70,10 +87,38 @@ if (nchar(current_samples_env) > 0) {
 if (ncol(mat) < 5) warning("Fewer than 5 samples — OUTRIDER results may be unreliable.")
 
 # ---------------- Build OutriderDataSet ----------------
-se  <- SummarizedExperiment(assays = list(counts = as.matrix(mat)))
+# CORRECTIF : fournir explicitement colData$sampleID (= colonnes de la matrice)
+# pour supprimer le warning "No sampleID was specified" et garantir que results()
+# porte les vrais identifiants quelle que soit la version d'OUTRIDER.
+sample_ids <- colnames(mat)
+se  <- SummarizedExperiment(
+    assays  = list(counts = as.matrix(mat)),
+    colData = S4Vectors::DataFrame(sampleID  = sample_ids,
+                                   row.names = sample_ids)
+)
 ods <- OutriderDataSet(se)
+# Garde-fou : échouer franchement si l'appariement ID est rompu plutôt que de
+# produire des sorties faussement nommées (exigence diagnostic).
+stopifnot(identical(as.character(colData(ods)$sampleID), sample_ids))
 
 # ---------------- Filter low-expressed genes ----------------
+# Remove genes with zeros in more than 30% of samples before OUTRIDER
+# This prevents "Every gene contains at least one zero" error with mixed cohorts
+count_mat <- assay(ods, "counts")
+
+# ── Liste COMPLÈTE des gènes de l'annotation (AVANT tout filtre) ─────────────
+# Sert à réindexer la sortie finale : tous les patients / tous les runs auront
+# EXACTEMENT les mêmes lignes de gènes (mêmes gènes, même ordre), pour permettre
+# la comparaison ligne à ligne. Les gènes non testés (retirés par les filtres
+# ci-dessous, nécessaires au bon fonctionnement du modèle OUTRIDER) seront
+# présents dans la sortie avec des valeurs NA (= "non évalué", honnête).
+ALL_GENES <- rownames(count_mat)
+cat("Gènes totaux dans l'annotation (avant filtre) :", length(ALL_GENES), "\n")
+
+zero_frac  <- rowMeans(count_mat == 0)
+ods        <- ods[zero_frac <= 0.3, ]
+cat("Genes after zero-fraction filter (<=30% zeros):", nrow(ods), "\n")
+
 ods <- filterExpression(ods, minCounts = TRUE, filterGenes = TRUE)
 cat("Genes after expression filter:", nrow(ods), "\n")
 if (nrow(ods) == 0) stop("No genes remaining after expression filter.")
@@ -106,12 +151,46 @@ select_bpparam <- function(n) {
 bp <- select_bpparam(n_threads)
 register(bp)
 
+# ---------------- Size factors (poscounts) ----------------
+# Avec une grande cohorte (centaines d'échantillons), CHAQUE gène a au moins un
+# zéro. La méthode estimateSizeFactors d'OUTRIDER calcule
+# loggeomeans = rowMeans(log(counts)) AVANT de filtrer les zéros : un seul zéro
+# dans une ligne -> log(0) = -Inf -> loggeomeans = -Inf pour ce gène. Si tous
+# les gènes ont >=1 zéro, all(is.infinite(loggeomeans)) -> stop :
+#   "Every gene contains at least one zero, cannot compute log geometric means"
+#
+# CORRECTIF : calculer les size factors avec la fonction DESeq2
+# estimateSizeFactorsForMatrix(type = "poscounts"), qui gère nativement les
+# zéros (moyenne géométrique sur les comptes positifs uniquement), puis les
+# injecter dans l'ODS. La décomposition controlForConfounders()/fit() qui suit
+# empêche OUTRIDER de ré-estimer (et donc de replanter).
+# NB : on n'utilise PAS library(DESeq2) (qui masquerait results()/counts() etc.
+# d'OUTRIDER) ; on appelle la fonction qualifiée DESeq2::estimateSizeFactorsForMatrix.
+cat("Estimating size factors (DESeq2 poscounts, gère les zéros)...\n")
+sf <- DESeq2::estimateSizeFactorsForMatrix(counts(ods), type = "poscounts")
+# Remplacer d'éventuels NA / 0 par la médiane des facteurs valides
+bad <- is.na(sf) | sf <= 0
+if (any(bad)) {
+    sf[bad] <- median(sf[!bad])
+    cat("  ", sum(bad), "size factor(s) NA/0 remplacé(s) par la médiane\n")
+}
+sizeFactors(ods) <- sf
+cat("  size factors (3 premiers) :", paste(round(head(sf, 3), 3), collapse = ", "), "\n")
+
 # ---------------- Estimate or set encoding dimension (q) ----------------
 # Config comment mentions findEncodingDim() but the correct exported API
 # is estimateBestQ() — they are equivalent; findEncodingDim() is internal.
 if (outrider_q == "auto") {
     cat("Estimating optimal encoding dimension via estimateBestQ() (OHT)...\n")
-    ods   <- estimateBestQ(ods, BPPARAM = bp)
+    # Compatibilité multi-versions d'OUTRIDER : les versions récentes de
+    # estimateBestQ() n'acceptent plus l'argument BPPARAM (parallélisme géré
+    # en interne), les anciennes oui. On teste la signature et on appelle en
+    # conséquence, plutôt que d'échouer sur "unused argument (BPPARAM = bp)".
+    if ("BPPARAM" %in% names(formals(estimateBestQ))) {
+        ods <- estimateBestQ(ods, BPPARAM = bp)
+    } else {
+        ods <- estimateBestQ(ods)
+    }
     q_val <- getBestQ(ods)
     cat("Estimated optimal q:", q_val, "\n")
 } else {
@@ -120,25 +199,42 @@ if (outrider_q == "auto") {
 }
 
 # ---------------- Fit OUTRIDER model ----------------
+# On décompose le wrapper OUTRIDER() en ses étapes explicites pour PRÉSERVER
+# les facteurs de taille calculés en mode "poscounts" ci-dessus. Le wrapper
+# OUTRIDER() rappelle estimateSizeFactors() avec la méthode "ratio" par défaut,
+# ce qui écraserait nos facteurs et reproduirait l'erreur de moyenne géométrique.
 set.seed(42)
-cat("Fitting OUTRIDER (q =", q_val, ", iterations =", max_iterations, ")...\n")
-ods <- OUTRIDER(
+cat("Controlling for confounders (q =", q_val, ")...\n")
+ods <- controlForConfounders(
     ods,
     q          = q_val,
     iterations = max_iterations,
     BPPARAM    = bp
 )
 
+cat("Fitting OUTRIDER model and computing p-values...\n")
+ods <- fit(ods, BPPARAM = bp)
+ods <- computePvalues(ods, BPPARAM = bp)
+ods <- computeZscores(ods)
+
 tryCatch(bpstop(bp), error = function(e) NULL)
 register(SerialParam())
 
 # ---------------- Extract results (unfiltered) ----------------
+# CORRECTIF : results() (OutriderDataSet) est QUALIFIÉ OUTRIDER:: car DESeq2
+# (utilisé via DESeq2::estimateSizeFactorsForMatrix) exporte aussi un results().
+# all = TRUE => assemble la table COMPLÈTE samples x genes (cf. doc OUTRIDER :
+# "If TRUE all results are assembled resulting in a data.table of length
+# samples x genes"). INDISPENSABLE pour obtenir TOUS les échantillons dans la
+# table _all.tsv (et donc un fichier par échantillon dans filesbysample/).
+# Sans all=TRUE, results() ne renvoie que les événements significatifs -> seuls
+# les échantillons porteurs d'un hit apparaissent (~16 au lieu de la cohorte).
 cat("Extracting results...\n")
 res <- as.data.table(
-    results(ods,
-            padjCutoff = 1,
-            l2fcCutoff = 0,
-            all        = TRUE)
+    OUTRIDER::results(ods,
+            padjCutoff   = 1,
+            zScoreCutoff = 0,
+            all          = TRUE)
 )
 
 # Strip leading "X" added by R to numeric sample names
@@ -179,8 +275,30 @@ setcolorder(res, c(present_required, extra_cols))
 # ---------------- Write unfiltered results (full table) ----------------
 # Mirrors {case_id}.outrider.tab in the Snakemake pipeline
 output_tab <- sub("(\\.[^.]+)?$", "_all.tsv", output_file, perl = TRUE)
-fwrite(res, output_tab, sep = "\t")
-cat("Unfiltered results (all genes):", nrow(res), "→", output_tab, "\n")
+
+# ── Réindexation sur TOUS les gènes de l'annotation ─────────────────────────
+# Garantit un ensemble de gènes IDENTIQUE (même nombre, même ordre) pour tous
+# les patients et tous les runs → comparaison ligne à ligne possible. Chaque
+# échantillon reçoit la grille complète ALL_GENES ; les gènes non testés par
+# OUTRIDER (filtrés pour la validité du modèle) sont présents avec padjValue,
+# l2fc, zScore, pValue = NA et aberrant = FALSE (non évalué, pas "non aberrant").
+all_samples <- unique(res$sampleID)
+grid <- CJ(sampleID = all_samples, geneID = ALL_GENES, sorted = FALSE)
+res_full <- merge(grid, res, by = c("sampleID", "geneID"), all.x = TRUE)
+# Les gènes non testés : marquer aberrant = FALSE (ils n'ont pas été évalués,
+# donc ne sont pas déclarés aberrants), le reste reste NA.
+res_full[is.na(aberrant), aberrant := FALSE]
+# Ordre des colonnes identique à res
+setcolorder(res_full, intersect(names(res), names(res_full)))
+# Ordre des lignes : par échantillon puis ordre canonique des gènes
+res_full[, geneID := factor(geneID, levels = ALL_GENES)]
+setorder(res_full, sampleID, geneID)
+res_full[, geneID := as.character(geneID)]
+
+fwrite(res_full, output_tab, sep = "\t")
+cat("Résultats réindexés (tous les gènes de l'annotation) :",
+    length(ALL_GENES), "gènes ×", length(all_samples), "échantillons =",
+    nrow(res_full), "lignes →", output_tab, "\n")
 
 # ---------------- Write filtered results (aberrant only) ----------------
 # Mirrors {case_id}_outrider_results.csv in the Snakemake pipeline

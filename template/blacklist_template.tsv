@@ -1,0 +1,11 @@
+# Blacklist unifiée — un échantillon par ligne
+# Colonnes : sample_id <TAB> tool <TAB> reason
+#
+# tool : outrider | fraser | pca | all
+#        "all" exclut l'échantillon des trois analyses
+#
+# Exemple :
+# 25D1234	outrider	contamination bactérienne
+# 26D0001	all	    échantillon dégradé RIN<4
+# 26D0002	pca	    outlier technique run17
+sample_id	tool	reason

@@ -1,201 +1,320 @@
 shell.executable('bash')
-from os.path import join
 import os
 import re
-import subprocess
 import sys
-from time import strftime, localtime
-
-#configfile: "config.yml"
-
-##--------------------------------------------------------------------------------------##
-## Auteur : Laura DO SOUTO FERREIRA (dosoutoferreira.laura@chu-nantes.fr)
-## Affiliation : CHU Nantes
-## But : Fichier Snakemake pour le pipeline de rnaseq
-## 
-## Latest modification : 27/01/2019
-## Latest modification : 11/10/2023  
-## 
-##--------------------------------------------------------------------------------------##
-
-
-##--------------------------------------------------------------------------------------##
-## Declaration des constantes
-##--------------------------------------------------------------------------------------##
-
-RUNS_DIR  = config['runs_dir'].rstrip("/")
-FASTQ_DIR = config['configuration']['fastq_dir']
-OUTPUT_REP = config['configuration']['outputDir']
-PIPELINE_DIR = config['configuration']['pipeline_dir']
-SAMPLES = config['configuration']["samples"] 
-GENOME = config["genome"]
-DI_BED = config["di_bed"]
-PANELAPP = config["panelapp"]
-HPO = config["hpo"]
-PHENO = config["pheno"]
-PLI = config["pli"]
-BED = config["bed"]
-fraser_count       = config["fraser_count"]
-fraser_count_hyper = config.get("fraser_count_hyper",
-                                config["fraser_count"].rstrip("/") + "_hyper/")
-PCA_blacklist = config["pca_blacklist"]
-outrider_blacklist = config["outrider_blacklist"]
-fraser_blacklist = config["fraser_blacklist"]
-RSEQ_BED = config["rseq_bed"]
-STAR_GENOME = config["star_genome"]
-RSEM_GENOME = config["rsem_genome"]
-KALLISTO_IDX = config["kallisto_idx"]
-PADDED = config["padded"]
-GTF = config["gtfFile"]
-MATRICES = config["matrices"]
-TPM = config["matrice_tpm"]
-run_annot_sake = config["run_annot_sake"]
-
-# --- featureCounts / make_zip globals ----------------------------------------
-# PROD_ROOT  : root directory of all run folders (same as runs_dir)
-PROD_ROOT       = config["runs_dir"].rstrip("/")
-GTF_REFSEQ      = config.get("gtf_refseq", "")
-GTF_ENSEMBL     = config.get("gtfFile", GTF)     # reuse Ensembl GTF already loaded
-GENEID_MAP      = config.get("geneid_map", PROD_ROOT + "/geneid_to_ensg.tsv")
-GNOMAD          = config.get("gnomad", "")
-MENDELIOME      = config.get("mendeliome", "")
-
-# RUN_SAMPLE is built after SAMPLES_ID is defined — see below
+import csv
 import glob as _glob
+import smtplib
+import subprocess
+from os.path import join
+from time import strftime, localtime
+from datetime import datetime
+from email.mime.text import MIMEText
+from pathlib import Path
 
-def _build_run_sample(prod_root, samples_id):
-    """
-    Scan prod_root for aligned BAMs and return
-    [(run_tag, sample_id, bam_path), ...] for each active sample.
-    """
-    triples = []
-    pattern = os.path.join(prod_root, "20*", "pipeline_v0", "star",
-                           "*_Aligned.sortedByCoord.out.bam")
-    for bam in sorted(_glob.glob(pattern)):
-        parts = bam.split(os.sep)
-        run_tag = next((p for p in parts if p.startswith("20")), None)
-        if run_tag is None:
+##─────────────────────────────────────────────────────────────────────────────
+## Pipeline RNA-seq — CHU Nantes
+## Auteur  : Laura DO SOUTO FERREIRA (dosoutoferreira.laura@chu-nantes.fr)
+## Mise à jour : 2026
+##─────────────────────────────────────────────────────────────────────────────
+
+
+##─────────────────────────────────────────────────────────────────────────────
+## Constantes
+##─────────────────────────────────────────────────────────────────────────────
+
+RUNS_DIR     = config['runs_dir'].rstrip("/")
+PROD_ROOT    = RUNS_DIR                                # alias explicite
+FASTQ_DIR    = config['configuration']['fastq_dir']
+OUTPUT_REP   = config['configuration']['outputDir']
+PIPELINE_DIR = config['configuration']['pipeline_dir']
+SAMPLES      = config['configuration']['samples']
+GENOME       = config['genome']
+DI_BED       = config['di_bed']
+PANELAPP     = config['panelapp']
+HPO          = config['hpo']
+PHENO        = config['pheno']
+PLI          = config['pli']
+BED          = config['bed']
+RSEQ_BED     = config['rseq_bed']
+STAR_GENOME  = config['star_genome']
+RSEM_GENOME  = config['rsem_genome']
+KALLISTO_IDX = config['kallisto_idx']
+PADDED       = config['padded']
+GTF          = config['gtfFile']
+MATRICES     = config['matrices']
+TPM          = config['matrice_tpm']
+
+GTF_REFSEQ   = config.get('gtf_refseq', '')
+GENEID_MAP   = config.get('geneid_map', PROD_ROOT + '/geneid_to_ensg.tsv')
+GNOMAD       = config.get('gnomad', '')
+MENDELIOME   = config.get('mendeliome', '')
+
+fraser_count       = config['fraser_count']
+fraser_count_hyper = config.get('fraser_count_hyper',
+                                config['fraser_count'].rstrip('/') + '_hyper/')
+
+# Blacklist unifiée (TSV : sample_id <TAB> tool <TAB> reason)
+# tool : outrider | fraser | pca | all
+BLACKLIST_FILE = config.get('blacklist', '')
+
+# Tag du run courant — défini ici pour être disponible dans tous les includes
+_CURRENT_RUN_TAG = os.path.basename(os.path.dirname(FASTQ_DIR))
+
+
+##─────────────────────────────────────────────────────────────────────────────
+## Wildcard constraints globaux
+## Empêchent Snakemake de résoudre un wildcard avec une valeur non conforme
+## et lèvent une AmbiguousRuleException lisible à la place d'un match silencieux.
+##─────────────────────────────────────────────────────────────────────────────
+
+wildcard_constraints:
+    # Identifiant complet d'échantillon : ex. 25D2693-STEMC-PUROMOINS-AVITI
+    # Autorise alphanum, tiret et underscore ; interdit le séparateur de chemin /
+    sample     = r"[A-Za-z0-9][A-Za-z0-9_-]+",
+    # Identifiant court (7 premiers caractères) : ex. 25D2693
+    samples_id = r"[A-Za-z0-9]{5,10}",
+    # Tag de run : commence par une année (20xx) suivie de caractères quelconques
+    # ex. 20251015_RUN41_NS2000_xxx
+    run        = r"20[0-9]{6}[A-Za-z0-9_-]*"
+
+##─────────────────────────────────────────────────────────────────────────────
+## Détection des versions d'outils (traçabilité ISO 15189)
+##─────────────────────────────────────────────────────────────────────────────
+## Les environnements conda sont créés par Snakemake dans le dossier passé via
+## --conda-prefix (launch_template.sh : ~/pipeline/RNASEQ/routine/conda_env),
+## et NON dans PIPELINE_DIR/conda_env (ancienne hypothèse -> "not found").
+## Ordre de recherche des préfixes :
+##   1. config['configuration']['conda_prefix'] (optionnel, explicite)
+##   2. préfixe conda de la session Snakemake en cours (--conda-prefix)
+##   3. PIPELINE_DIR/conda_env (ancien emplacement)
+##   4. ~/pipeline/RNASEQ/routine/conda_env (défaut de launch_template.sh)
+
+def _conda_prefixes():
+    cands = []
+    cfg = config.get('configuration', {}).get('conda_prefix')
+    if cfg:
+        cands.append(cfg)
+    try:                                    # Snakemake >= 8
+        cands.append(workflow.deployment_settings.conda_prefix)
+    except Exception:
+        pass
+    try:                                    # Snakemake 7
+        cands.append(workflow.conda_prefix)
+    except Exception:
+        pass
+    cands.append(os.path.join(PIPELINE_DIR, 'conda_env'))
+    cands.append('~/pipeline/RNASEQ/routine/conda_env')
+    seen, out = set(), []
+    for c in cands:
+        if not c:
             continue
-        basename = os.path.basename(bam)
-        sample_id = basename.split("-")[0] if "-" in basename else basename.split("_")[0]
-        if sample_id in samples_id:
-            triples.append((run_tag, sample_id, bam))
-    return triples
+        p = Path(os.path.expanduser(str(c))).resolve()
+        if p.is_dir() and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
 
 
+def _envs_with(rel_path):
+    """Dossiers d'environnement contenant rel_path (ex. 'bin/STAR').
+    Recherche directe <prefix>/<env>/<rel_path> (pas de glob récursif : rapide)."""
+    hits = []
+    for prefix in _conda_prefixes():
+        for env_dir in sorted(prefix.iterdir()):
+            if env_dir.is_dir() and (env_dir / rel_path).exists():
+                hits.append(env_dir)
+    return hits
 
-def get_version_from_env(env_yml, cmd):
+
+_VERSION_CACHE = {}
+
+def get_version_from_env(cmd, env_yml=None):
     """
-    Detect a tool version by searching for its binary inside the local conda_env folder.
+    Version d'un outil : exécute `cmd` dans l'environnement conda qui contient
+    son binaire (bin/ de l'env ajouté en tête du PATH, pour que les wrappers
+    java/perl/python et les pipes fonctionnent).
+    Si plusieurs environnements contiennent l'outil avec des versions
+    DIFFÉRENTES, toutes sont rapportées (ambiguïté explicite plutôt qu'un choix
+    arbitraire). env_yml : conservé pour compatibilité, non utilisé.
     """
-    import subprocess
-    from pathlib import Path
-
-    print(f"[DEBUG] get_version_from_env called with: {env_yml}, {cmd}")
+    if cmd in _VERSION_CACHE:
+        return _VERSION_CACHE[cmd]
     bin_name = cmd.split()[0]
-
-    # 🔧 Ensure PIPELINE_DIR is a Path, even if it's a string globally
-    base_dir = Path(PIPELINE_DIR) / "conda_env"
-    print(f"[DEBUG] Searching envs in {base_dir}")
-
-    found_binary = None
-
-    # Recursively look for binary under all conda_env subdirectories
-    for env_dir in sorted(base_dir.glob("*")):
-        if not env_dir.is_dir():
-            continue
-        for binary in env_dir.glob(f"**/bin/{bin_name}"):
-            if binary.exists():
-                print(f"[DEBUG] ✅ Found binary {binary}")
-                found_binary = binary
-                break
-        if found_binary:
-            break
-
-    if not found_binary:
-        print(f"[WARN] ❌ Could not find {bin_name} in any conda_env directory")
-        return f"{bin_name}: not found"
-
-    # Run the version command, capturing both stdout and stderr
-    try:
-        result = subprocess.run(
-            f"{found_binary} {cmd[len(bin_name):]}",
-            shell=True,
-            check=True,
-            capture_output=True,
-            text=True,
-            executable="/bin/bash"
-        )
-        output = (result.stdout + result.stderr).strip()
-        version = output.split("\n")[0]
-        print(f"[DEBUG] ✅ {bin_name} version detected: {version}")
-        return version if version else f"{bin_name}: version not found"
-    except subprocess.CalledProcessError as e:
-        print(f"[ERROR] Failed to run {cmd} in {found_binary}: {e}")
-        return f"/bin/sh: 1: {bin_name}: not found"
+    envs = _envs_with(f'bin/{bin_name}')
+    if not envs:
+        prefixes = ', '.join(str(p) for p in _conda_prefixes()) or 'aucun préfixe existant'
+        print(f'[WARN] {bin_name} introuvable dans les environnements conda ({prefixes})')
+        res = f'{bin_name}: not found'
+        _VERSION_CACHE[cmd] = res
+        return res
+    versions = []
+    for env_dir in envs:
+        try:
+            r = subprocess.run(
+                f'export PATH="{env_dir}/bin:$PATH"; {cmd}',
+                shell=True, capture_output=True, text=True,
+                executable='/bin/bash', timeout=120,
+            )
+            v = (r.stdout + r.stderr).strip().split('\n')[0].strip()
+        except Exception as e:
+            v = ''
+            print(f'[WARN] échec de `{cmd}` dans {env_dir.name} : {e}')
+        if v and v not in versions:
+            versions.append(v)
+    if not versions:
+        res = f'{bin_name}: version not found'
+    elif len(versions) == 1:
+        res = versions[0]
+    else:
+        print(f'[WARN] {bin_name} : versions différentes selon les environnements : {versions}')
+        res = ' | '.join(versions)
+    _VERSION_CACHE[cmd] = res
+    return res
 
 
-# Set environment variables
-#os.environ["CONDARC"] = OUTPUT_REP + ".condarc"
+def get_r_package_version(pkg):
+    """Version d'un package R lue dans DESCRIPTION de la bibliothèque R des
+    environnements conda (pas d'exécution de R nécessaire)."""
+    key = f'Rpkg:{pkg}'
+    if key in _VERSION_CACHE:
+        return _VERSION_CACHE[key]
+    versions = []
+    for env_dir in _envs_with(f'lib/R/library/{pkg}/DESCRIPTION'):
+        with open(env_dir / f'lib/R/library/{pkg}/DESCRIPTION') as fh:
+            for line in fh:
+                if line.startswith('Version:'):
+                    v = line.split(':', 1)[1].strip()
+                    if v not in versions:
+                        versions.append(v)
+                    break
+    if not versions:
+        print(f'[WARN] package R {pkg} introuvable dans les environnements conda')
+        res = f'{pkg}: not found'
+    elif len(versions) == 1:
+        res = versions[0]
+    else:
+        print(f'[WARN] {pkg} : versions différentes selon les environnements : {versions}')
+        res = ' | '.join(versions)
+    _VERSION_CACHE[key] = res
+    return res
 
-SAMPLES_ID = [s[:7] for s in SAMPLES]
 
-# FRASER and OUTRIDER are only meaningful for blood RNA-seq
+##─────────────────────────────────────────────────────────────────────────────
+## Helpers — sample ID extraction
+##─────────────────────────────────────────────────────────────────────────────
+
+def _extract_short_id(sample_name):
+    """
+    Extract the core sample ID from any naming convention:
+      25D2693-STEMC-PUROMOINS-AVITI  →  25D2693
+      26D0198-MOINS                   →  26D0198
+      26D0198_MOINS                   →  26D0198
+    """
+    return re.split(r'[-_]', sample_name)[0]
+
+
+SAMPLES_ID = [_extract_short_id(s) for s in SAMPLES]
+
+# FRASER / OUTRIDER : uniquement les échantillons sang
 FRASER_KEYWORDS = tuple(
     kw.upper() for kw in
-    config.get("fraser_keywords", "MOINS PUROMINS").split()
+    config.get('fraser_keywords', 'MOINS PUROMOINS').split()
 )
 
-# Try to detect blood samples from full sample names first.
-# If SAMPLES only contains short IDs (e.g. "26D0198"), fall back to
-# scanning FASTQ filenames to recover the full name with the suffix.
 def _get_full_sample_names(samples, fastq_dir):
     """
-    If sample names already contain a keyword, use them as-is.
-    Otherwise scan fastq_dir for R1 files to recover full names.
+    Si le nom de l'échantillon contient déjà un keyword sang, on l'utilise
+    tel quel. Sinon on scanne fastq_dir/*_R1.fastq.gz pour retrouver le nom
+    complet (supporte NextSeq 26D0198-MOINS et AVITI 25D2693-STEMC-PUROMOINS-AVITI).
     """
-    import glob as _g
     full = []
     for s in samples:
         if any(kw in s.upper() for kw in FRASER_KEYWORDS):
             full.append(s)
         else:
-            # look for <s>*_R1.fastq.gz in fastq_dir
-            pattern = os.path.join(fastq_dir, f"{s}*_R1.fastq.gz")
-            hits = _g.glob(pattern)
+            hits = sorted(_glob.glob(os.path.join(fastq_dir, f'{s}*_R1.fastq.gz')))
             if hits:
-                # derive full name from filename: strip _R1.fastq.gz
-                fname = os.path.basename(hits[0])
-                full_name = fname.replace("_R1.fastq.gz", "")
-                full.append(full_name)
+                full.append(os.path.basename(hits[0]).replace('_R1.fastq.gz', ''))
             else:
-                full.append(s)  # keep as-is if not found
+                full.append(s)
     return full
 
 SAMPLES_FULL     = _get_full_sample_names(SAMPLES, FASTQ_DIR)
 SAMPLES_BLOOD    = [s for s in SAMPLES_FULL if any(kw in s.upper() for kw in FRASER_KEYWORDS)]
-SAMPLES_ID_BLOOD = [s[:7] for s in SAMPLES_BLOOD]
+SAMPLES_ID_BLOOD = [_extract_short_id(s) for s in SAMPLES_BLOOD]
 
-print(f"[INFO] FRASER_KEYWORDS: {FRASER_KEYWORDS}", file=sys.stderr)
-print(f"[INFO] SAMPLES ({len(SAMPLES)}): {SAMPLES[:3]}...", file=sys.stderr)
-print(f"[INFO] SAMPLES_BLOOD ({len(SAMPLES_BLOOD)}): {SAMPLES_BLOOD[:3]}...", file=sys.stderr)
-print(f"[INFO] SAMPLES_ID_BLOOD ({len(SAMPLES_ID_BLOOD)}): {SAMPLES_ID_BLOOD[:3]}...", file=sys.stderr)
+print(f'[INFO] FRASER_KEYWORDS    : {FRASER_KEYWORDS}',                       file=sys.stderr)
+print(f'[INFO] SAMPLES       ({len(SAMPLES):>3}) : {SAMPLES[:3]}...',         file=sys.stderr)
+print(f'[INFO] SAMPLES_BLOOD ({len(SAMPLES_BLOOD):>3}) : {SAMPLES_BLOOD[:3]}...', file=sys.stderr)
+print(f'[INFO] SAMPLES_ID_BLOOD ({len(SAMPLES_ID_BLOOD):>3}) : {SAMPLES_ID_BLOOD[:3]}...', file=sys.stderr)
 
-def active_samples(blacklist_file, samples=SAMPLES_ID):
+
+##─────────────────────────────────────────────────────────────────────────────
+## Blacklist unifiée
+##─────────────────────────────────────────────────────────────────────────────
+
+def _load_blacklist(tool):
     """
-    Return list of sample IDs excluding any in the blacklist file.
-    If the blacklist file does not exist, return all samples.
+    Charge la blacklist unifiée (TSV : sample_id, tool, reason).
+    tool : 'outrider' | 'fraser' | 'pca'
+    Les lignes avec tool='all' s'appliquent à tous les outils.
     """
-    if os.path.exists(blacklist_file):
-        with open(blacklist_file) as f:
-            excluded = set(f.read().split())
-    else:
-        excluded = set()
+    excluded = set()
+    if not BLACKLIST_FILE or not os.path.exists(BLACKLIST_FILE):
+        return excluded
+    with open(BLACKLIST_FILE) as f:
+        for row in csv.DictReader(f, delimiter='\t'):
+            t   = row.get('tool', '').strip().lower()
+            sid = row.get('sample_id', '').strip()
+            if sid and not sid.startswith('#') and (t == tool or t == 'all'):
+                excluded.add(sid)
+    return excluded
+
+def active_samples(tool, samples):
+    """Retourne les samples non blacklistés pour un outil donné."""
+    excluded = _load_blacklist(tool)
+    if excluded:
+        print(f'[blacklist] {tool} : {len(excluded)} exclus : {sorted(excluded)}')
     return [s for s in samples if s not in excluded]
 
-ACTIVE_FRASER   = active_samples(fraser_blacklist,   samples=SAMPLES_ID_BLOOD)
-ACTIVE_OUTRIDER = active_samples(outrider_blacklist,  samples=SAMPLES_ID_BLOOD)
-ACTIVE_PCA      = active_samples(PCA_blacklist)
+# Conservés pour compatibilité avec les règles existantes
+outrider_blacklist = BLACKLIST_FILE
+fraser_blacklist   = BLACKLIST_FILE
+PCA_blacklist      = BLACKLIST_FILE
+
+ACTIVE_FRASER   = active_samples('fraser',   samples=SAMPLES_ID_BLOOD)
+ACTIVE_OUTRIDER = active_samples('outrider', samples=SAMPLES_ID_BLOOD)
+ACTIVE_PCA      = active_samples('pca',      samples=SAMPLES_ID)
+
+
+##─────────────────────────────────────────────────────────────────────────────
+## RUN_SAMPLE — scan des BAMs historiques
+##─────────────────────────────────────────────────────────────────────────────
+
+def _build_run_sample(prod_root, samples_id):
+    """
+    Scanne prod_root pour les BAMs alignés et retourne
+    [(run_tag, sample_id, bam_path), ...] pour chaque échantillon actif.
+    """
+    triples = []
+    pattern = os.path.join(prod_root, '20*', 'pipeline_v0', 'star',
+                           '*_Aligned.sortedByCoord.out.bam')
+    for bam in sorted(_glob.glob(pattern)):
+        parts   = bam.split(os.sep)
+        run_tag = next((p for p in parts if p.startswith('20')), None)
+        if run_tag is None:
+            continue
+        basename  = os.path.basename(bam)
+        sample_id = basename.split('-')[0] if '-' in basename else basename.split('_')[0]
+        if sample_id in samples_id:
+            triples.append((run_tag, sample_id, bam))
+    return triples
+
+
+##─────────────────────────────────────────────────────────────────────────────
+## Includes
+##─────────────────────────────────────────────────────────────────────────────
 
 include: '../rules/logging.smk'
 include: '../rules/01_trim_fastqc.smk'
@@ -207,141 +326,361 @@ include: '../rules/04_outrider_fraser_hyper.smk'
 include: '../rules/04_make_zip.smk'
 include: '../rules/05_metrics.smk'
 include: '../rules/06_versions.smk'
-include: '../rules/07_variantCalling_bis.smk'
+
+if config.get('run_variant_calling', True):
+    include: '../rules/experimental/07_variantCalling_bis.smk'
+
+if config.get('cibersortx', {}).get('enabled', False):
+    include: '../rules/07_cibersortx.smk'
 
 workdir: OUTPUT_REP
 
-# RUN_SAMPLE: built here, after SAMPLES_ID is available
-RUN_SAMPLE = _build_run_sample(PROD_ROOT, set(SAMPLES_ID))
+
+##─────────────────────────────────────────────────────────────────────────────
+## RUN_SAMPLE (construit après les includes pour que les wildcards soient connus)
+##─────────────────────────────────────────────────────────────────────────────
+
+RUN_SAMPLE         = _build_run_sample(PROD_ROOT, set(SAMPLES_ID))
+RUN_SAMPLE_CURRENT = [(r, s, b) for r, s, b in RUN_SAMPLE if r == _CURRENT_RUN_TAG]
+
+# Dict pré-calculé : run_tag → liste des sample_ids (utilisé dans 04_make_zip.smk)
+# Défini ici (après RUN_SAMPLE) pour être disponible dans tous les includes
+_RUN_TO_SAMPLES = {}
+for _r, _s, _ in RUN_SAMPLE:
+    _RUN_TO_SAMPLES.setdefault(_r, []).append(_s)
+
+# Validation : tous les échantillons du run courant devraient avoir un BAM.
+# _build_run_sample scanne les BAMs existants. Au PREMIER lancement d'un run,
+# STAR n'a pas encore tourné, donc aucun BAM n'existe — c'est normal.
+# On AVERTIT (non bloquant) : Snakemake construit le DAG et déclenche STAR,
+# puis featurecounts_gene une fois les BAMs produits.
+_current_samples_found   = {s for r, s, b in RUN_SAMPLE_CURRENT}
+_current_samples_missing = [s for s in SAMPLES_ID if s not in _current_samples_found]
+if _current_samples_missing:
+    if len(_current_samples_found) == 0:
+        # Run frais : aucun BAM encore — STAR sera déclenché par le DAG. Normal.
+        print(
+            f'[INFO] Run courant ({_CURRENT_RUN_TAG}) : aucun BAM encore présent '
+            f'({len(_current_samples_missing)} échantillon(s)). '
+            f'STAR sera exécuté par le pipeline ; featureCounts suivra.',
+            file=sys.stderr
+        )
+    else:
+        # Run partiellement aligné : certains BAMs manquent. À signaler.
+        print(
+            f'[WARN] Run courant ({_CURRENT_RUN_TAG}) : '
+            f'{len(_current_samples_missing)} échantillon(s) sans BAM, '
+            f'{len(_current_samples_found)} présent(s).\n'
+            f'  Sans BAM : {_current_samples_missing}\n'
+            f'  → STAR sera (re)déclenché pour les manquants si les FASTQ existent.',
+            file=sys.stderr
+        )
+
+# Log non bloquant : résumé par run et signalement des runs historiques
+# dont certains échantillons attendus sont absents.
+# Le run courant est déjà couvert par la WorkflowError ci-dessus.
+for _run in sorted(_RUN_TO_SAMPLES):
+    _found    = _RUN_TO_SAMPLES[_run]
+    _expected = SAMPLES_ID if _run == _CURRENT_RUN_TAG else [
+        s for s in SAMPLES_ID if s in {s2 for _, s2, _ in RUN_SAMPLE}
+    ]
+    print(
+        f'[RUN_SAMPLE] {_run}: {len(_found)} BAM(s) trouvé(s)',
+        file=sys.stderr
+    )
+
+# Signaler les échantillons du config absents de tout run historique
+_all_found = {s for _, s, _ in RUN_SAMPLE}
+_never_found = sorted(s for s in SAMPLES_ID if s not in _all_found)
+if _never_found:
+    print(
+        f'[WARN] {len(_never_found)} échantillon(s) du config sans BAM dans aucun run '
+        f'historique : {_never_found}\n'
+        f'  → featurecounts_gene et les règles dépendantes ne seront pas déclenchés '
+        f'pour ces échantillons.',
+        file=sys.stderr
+    )
+
+
+##─────────────────────────────────────────────────────────────────────────────
+## Rule all
+##─────────────────────────────────────────────────────────────────────────────
 
 rule all:
     input:
-        expand(FASTQ_DIR+"/{sample}_R1.fastq.gz",sample=SAMPLES),
-        expand(FASTQ_DIR+"/{sample}_R2.fastq.gz",sample=SAMPLES),
-        expand(rules.fastqc_report.output, sample=SAMPLES),
-        expand(rules.fastp.output.html, sample=SAMPLES),
-        expand(rules.fastp.output.R1, sample=SAMPLES),
-        expand(rules.fastp.output.R2, sample=SAMPLES),
+        # ── FASTQ ──────────────────────────────────────────────────────────
+        expand(FASTQ_DIR + '/{sample}_R1.fastq.gz', sample=SAMPLES),
+        expand(FASTQ_DIR + '/{sample}_R2.fastq.gz', sample=SAMPLES),
+        # ── QC & trimming ──────────────────────────────────────────────────
+        expand(rules.fastqc_report.output,      sample=SAMPLES),
+        expand(rules.fastp.output.html,         sample=SAMPLES),
         expand(rules.fastqc_trim_report.output, sample=SAMPLES),
+        # ── Alignement ─────────────────────────────────────────────────────
         expand(rules.alignment_star.output.bam, sample=SAMPLES),
-        expand(rules.index_bam.output.bai, sample=SAMPLES),
-        expand(rules.htseq_gene.output.gene, sample=SAMPLES),
-        expand(rules.matrix.output, sample=SAMPLES),
-        expand(rules.matrix_tpm.output.gene, sample=SAMPLES),
-        expand(rules.kallistoBed.output.h5, sample=SAMPLES),
-        expand(rules.kallisto2gene.output, sample=SAMPLES),
-        expand(rules.bam_stats.output.on_target, sample=SAMPLES),
-        expand(rules.rseqc.output, sample=SAMPLES),
-        expand(rules.multiqc.output, sample=SAMPLES), 
-        expand(rules.outrider.output.out_file, sample=SAMPLES),
-        rules.annotation_outrider.output.annot,
-        expand(rules.fraser_config.output, sample=SAMPLES),
-        rules.fraser.output.fraser,
-        expand(rules.fraser.output.fraser),
-        expand(rules.fraser_boxplot.output.filt, samples_id=ACTIVE_FRASER),
-        expand(rules.volcano.output, samples_id=ACTIVE_OUTRIDER),
-        expand(rules.boxplot.output.filt, samples_id=ACTIVE_OUTRIDER),
-        # featureCounts (03bis) — one output per (run, sample) pair
-        [rules.featurecounts_gene.output.gene.format(run=r, sample=s)
-         for r, s, _ in RUN_SAMPLE],
-        [rules.map_refseq_to_ensembl.output.ensembl_counts.format(run=r, sample=s)
-         for r, s, _ in RUN_SAMPLE],
+        expand(rules.index_bam.output.bai,      sample=SAMPLES),
+        # ── Comptage ───────────────────────────────────────────────────────
+        expand(rules.htseq_gene.output.gene,          sample=SAMPLES),
+        expand(rules.matrix.output,                   sample=SAMPLES),
+        expand(rules.matrix_tpm.output.gene,          sample=SAMPLES),
+        expand(rules.kallistoBed.output.h5,           sample=SAMPLES),
+        expand(rules.kallisto2gene.output,            sample=SAMPLES),
+        # ── featureCounts (run courant uniquement) ──────────────────────────
+        [rules.featurecounts_gene.output.gene.format(run=_CURRENT_RUN_TAG, sample=s)
+         for s in SAMPLES],
+        [rules.map_refseq_to_ensembl.output.ensembl_counts.format(run=_CURRENT_RUN_TAG, sample=s)
+         for s in SAMPLES],
         rules.matrix_featurecounts.output.matrix,
-        # hyper pipeline (outrider + fraser on featureCounts matrix)
+        # ── OUTRIDER / FRASER ───────────────────────────────────────────────
+        expand(rules.outrider.output.out_file,    sample=SAMPLES),
+        rules.annotation_outrider.output.annot,
+        expand(rules.fraser_config.output,        sample=SAMPLES),
+        rules.fraser.output.fraser,
+        expand(rules.volcano.output,              samples_id=ACTIVE_OUTRIDER),
+        expand(rules.boxplot.output.filt,         samples_id=ACTIVE_OUTRIDER),
+        expand(rules.fraser_boxplot.output.filt,  samples_id=ACTIVE_FRASER),
+        # ── Pipeline hyper ──────────────────────────────────────────────────
         rules.annotation_outrider_hyper.output.annot,
         rules.annotation_fraser_hyper.output.annot_fraser,
         rules.rnaseq_per_sample_hyper.output.zip_file,
-        # ZIP bundling + per-sample analysis (04_make_zip)
-        [rules.make_analysis_zip.output.zip.format(run=r)
-         for r in sorted({r for r, s, _ in RUN_SAMPLE})],
-        [rules.run_rnaseq_analysis.output.result_zip.format(run=r)
-         for r in sorted({r for r, s, _ in RUN_SAMPLE})],
-        rules.generate_and_run_param_notebook.output.executed_nb,
+        # ── Métriques & QC ─────────────────────────────────────────────────
+        expand(rules.bam_stats.output.on_target, sample=SAMPLES),
+        expand(rules.rseqc.output,               sample=SAMPLES),
+        rules.multiqc.output,
         rules.generate_metrics.output.metrics,
-        "benchmarks/versions/pipeline_versions.tsv",
-        rules.mean_chrY_expression.output.tsv,
-        rules.vaf_violin_plot_run_females.output.plot
+        rules.generate_metrics.output.warnings,
+        # ── Bundling & rapports ─────────────────────────────────────────────
+        # _CURRENT_RUN_TAG est toujours inclus (run frais où RUN_SAMPLE est vide).
+        [rules.make_analysis_zip.output.zip.format(run=r)
+         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+        [rules.run_rnaseq_analysis.output.result_zip.format(run=r)
+         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+        [rules.run_rnaseq_analysis_current_run.output.result_zip.format(run=r)
+         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+        # ── Bundling & rapports — pipeline hyper ───────────────────────────
+        [rules.make_analysis_zip_hyper.output.zip.format(run=r)
+         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+        [rules.run_rnaseq_analysis_hyper.output.result_zip.format(run=r)
+         for r in sorted({_CURRENT_RUN_TAG} | {r for r, s, _ in RUN_SAMPLE})],
+        rules.generate_and_run_param_notebook.output.executed_nb,
+        # ── Versions & rulegraph ────────────────────────────────────────────
+        rules.save_pipeline_versions.output,
+        rules.save_rulegraph.output.png,
+        # ── Biais d'inactivation X (activé par défaut) ─────────────────────
+        *(  [rules.mean_chrY_expression.output.tsv,
+             rules.vaf_violin_plot_run_females.output.plot]
+            if config.get('run_variant_calling', True) else []  ),
+        # ── Déconvolution cellulaire CIBERSORTx (optionnel) ────────────────
+        *(  [rules.cibersortx_plot.output.png]
+            if config.get('cibersortx', {}).get('enabled', False) else []  ),
+        # ── Nettoyage final (dernier) : retire analysis_input/output/current ─
+        # Dépend des livrables hyper -> s'exécute en tout dernier.
+        rules.cleanup_final.output.marker,
 
 
-addresses = ["laura.dosoutoferreira@chu-nantes.fr"]
-#t = "ERREUR ROUTINE !"
-#
-#onerror:
-#    for mail in addresses :
-#        shell('mail -s "an error occurred" {mail} ')
-#
-#onsuccess:
-#    for mail in addresses:
-#        shell(f'mail -s "Pipeline completed successfully" {mail} <<< "The Snakemake pipeline finished without errors."')
+##─────────────────────────────────────────────────────────────────────────────
+## Cible partielle : relancer uniquement OUTRIDER + pipeline hyper
+##
+## Usage :
+##   snakemake -s pipeline.smk --configfile config.yml \
+##       --use-conda -c 60 --target-rules outrider_and_hyper
+##
+## Pré-requis : matrice HTSeq (matrice.txt) et matrice featureCounts
+## doivent déjà exister (produites par un run complet précédent).
+##─────────────────────────────────────────────────────────────────────────────
 
-addresses = ["laura.dosoutoferreira@chu-nantes.fr"]
+rule outrider_and_hyper:
+    input:
+        expand(rules.outrider.output.out_file, sample=SAMPLES),
+        rules.annotation_outrider.output.annot,
+        rules.annotation_outrider.output.files,
+        rules.annotation_outrider_hyper.output.annot,
+        rules.annotation_fraser_hyper.output.annot_fraser,
+        rules.rnaseq_per_sample_hyper.output.zip_file,
 
-import smtplib
-from email.mime.text import MIMEText
-from datetime import datetime
 
-# -----------------------------
-# CONFIGURATION
-# -----------------------------
-SMTP_HOST =   "172.27.162.183"
-SMTP_PORT = 25  
+##─────────────────────────────────────────────────────────────────────────────
+## Notifications mail
+##─────────────────────────────────────────────────────────────────────────────
 
-FROM = "laura.dosoutoferreira@chu-nantes.fr"  
-TO = ["laura.dosoutoferreira@chu-nantes.fr"]   
+_SMTP_HOST = config.get('smtp_host', 'localhost')
+_SMTP_PORT = int(config.get('smtp_port', 25))
+_MAIL_FROM = config.get('mail_from', '')
+_MAIL_TO   = config.get('mail_to',   [])
 
-# -----------------------------
-# EMAIL FUNCTION
-# -----------------------------
 def send_email(subject, body):
     try:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = FROM
-        msg["To"] = ", ".join(TO)
-
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+        msg            = MIMEText(body)
+        msg['Subject'] = subject
+        msg['From']    = _MAIL_FROM
+        msg['To']      = ', '.join(_MAIL_TO)
+        with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=10) as server:
             server.send_message(msg)
-
-        print(f"[INFO] Email sent to {TO} from {FROM}")
+        print(f'[INFO] Email envoyé à {_MAIL_TO}')
     except Exception as e:
-        print(f"[WARN] Could not send email: {e}")
+        print(f'[WARN] Envoi email impossible : {e}')
 
-# -----------------------------
-# envoie mail
-# -----------------------------
-onsuccess:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    send_email(
-        subject="✅ Snakemake pipeline completed successfully",
-        body=f"The pipeline finished successfully at {now}.\nAll rules completed without errors."
+def rsync_results_to_sitatst():
+    """
+    Transfère les résultats complets (pipeline_v0/) du run courant vers le
+    serveur sitatst, PUIS déclenche la mise à jour de la base QC (update_db.py)
+    qui alimente l'interface metrics (app_dashboard.py) hébergée sur sitatst.
+
+    Déclenché depuis onsuccess (pipeline réussi), BLOQUANT : la fonction ne
+    rend la main qu'une fois le transfert + la vérification terminés.
+
+    Piloté par la section `sync_sitatst` du config.yml. Si `enabled` est faux
+    ou absent, la fonction ne fait rien (retour silencieux) — le pipeline reste
+    fonctionnel sans synchronisation.
+
+    Leçon du bug de troncature FASTQ (course concat/rsync) : on ne se fie pas à
+    l'existence d'un fichier ; rsync est bloquant (subprocess.run) et on vérifie
+    l'intégrité gzip côté distant après transfert avant de mettre à jour la DB.
+    """
+    sync = config.get('sync_sitatst', {}) or {}
+    if not sync.get('enabled', False):
+        print('[INFO] sync_sitatst désactivé (config) — pas de transfert.')
+        return
+
+    host      = sync.get('host', '')
+    user      = sync.get('user', '')
+    dest_root = sync.get('dest_path', '').rstrip('/')
+    pass_file = sync.get('pass_file', '')      # fichier chmod 600 contenant le mot de passe SSH
+    ssh_key   = sync.get('ssh_key', '')        # chemin d'une clé SSH privée dédiée (recommandé)
+    update_db = sync.get('update_db', True)    # déclencher update_db.py sur sitatst ?
+    remote_db = sync.get('remote_db', '')      # chemin de rnaseq_qc.db SUR sitatst
+
+    if not (host and user and dest_root):
+        print('[WARN] sync_sitatst incomplet (host/user/dest_path manquant) — transfert annulé.')
+        return
+
+    # Source : le dossier pipeline_v0 du run courant
+    src = os.path.join(OUTPUT_REP, 'pipeline_v0') + '/'
+    if not os.path.isdir(src):
+        print(f'[WARN] Source introuvable : {src} — transfert annulé.')
+        return
+
+    dest = f'{user}@{host}:{dest_root}/{_CURRENT_RUN_TAG}/pipeline_v0/'
+
+    # --- Construction de la commande rsync ---
+    # -a archive, -z compression, --checksum : compare le contenu (pas date+taille)
+    #    -> important pour ne pas laisser un fichier tronqué existant passer pour "à jour".
+    #    (cf. man rsync : -c/--checksum "skip based on checksum, not mod-time & size")
+    # -a archive, -z compression, --checksum : compare le contenu (pas date+taille)
+    #    -> important pour ne pas laisser un fichier tronqué existant passer pour "à jour".
+    #    (cf. man rsync : -c/--checksum "skip based on checksum, not mod-time & size")
+    # Clé SSH dédiée si fournie (ssh_key), sinon clé par défaut / sshpass.
+    ssh_opt = 'ssh -o StrictHostKeyChecking=no'
+    if ssh_key:
+        ssh_opt += f' -i {ssh_key}'
+    base_rsync = ['rsync', '-az', '--checksum', '--partial', '-e', ssh_opt, src, dest]
+
+    # sshpass si un fichier mot de passe est fourni ; sinon on suppose une clé SSH
+    if pass_file and os.path.isfile(pass_file):
+        try:
+            password = Path(pass_file).read_text().strip()
+        except Exception as e:
+            print(f'[WARN] Lecture pass_file impossible : {e} — transfert annulé.')
+            return
+        cmd = ['sshpass', '-p', password] + base_rsync
+        cmd_env = {**os.environ, 'SSHPASS': password}
+    else:
+        cmd = base_rsync
+        cmd_env = dict(os.environ)
+
+    print(f'[INFO] rsync résultats → sitatst : {dest}')
+    try:
+        # BLOQUANT : on attend la fin réelle du transfert
+        ret = subprocess.run(cmd, env=cmd_env, timeout=86400)
+    except FileNotFoundError:
+        print('[WARN] sshpass/rsync introuvable — transfert annulé.')
+        return
+    except subprocess.TimeoutExpired:
+        print('[WARN] rsync : timeout (24 h) — transfert incomplet.')
+        return
+    if ret.returncode != 0:
+        print(f'[WARN] rsync a échoué (code {ret.returncode}) — DB non mise à jour.')
+        return
+    print('[INFO] rsync terminé avec succès.')
+
+    # --- Contrôle d'intégrité côté distant (défense en profondeur) ---
+    # On teste les .gz transférés ; si un est corrompu, on n'actualise pas la DB.
+    remote_check = (
+        f"bad=0; for f in {dest_root}/{_CURRENT_RUN_TAG}/pipeline_v0/*/*.gz; do "
+        f"[ -e \"$f\" ] || continue; gzip -t \"$f\" 2>/dev/null || bad=$((bad+1)); done; "
+        f"echo INTEGRITY_BAD=$bad"
     )
+    ssh_base = ['ssh', '-o', 'StrictHostKeyChecking=no']
+    if ssh_key:
+        ssh_base += ['-i', ssh_key]
+    ssh_base += [f'{user}@{host}', remote_check]
+    ssh_cmd  = (['sshpass', '-p', password] + ssh_base) if (pass_file and os.path.isfile(pass_file)) else ssh_base
+    try:
+        chk = subprocess.run(ssh_cmd, env=cmd_env, capture_output=True, text=True, timeout=3600)
+        if 'INTEGRITY_BAD=0' not in (chk.stdout or ''):
+            print(f'[WARN] Intégrité distante KO ({chk.stdout.strip()}) — DB non mise à jour.')
+            return
+        print('[INFO] Intégrité distante OK.')
+    except Exception as e:
+        print(f'[WARN] Vérification intégrité distante impossible : {e} — on continue prudemment.')
+
+    # --- Mise à jour de la base QC sur sitatst (alimente l'interface metrics) ---
+    if update_db and remote_db:
+        qc_summary_remote = f'{dest_root}/{_CURRENT_RUN_TAG}/pipeline_v0/metrics/qc_summary.tsv'
+        update_cmd = (
+            f"python {sync.get('remote_update_db_script', 'update_db.py')} "
+            f"--qc_summary {qc_summary_remote} --db {remote_db}"
+        )
+        ssh_upd = ['ssh', '-o', 'StrictHostKeyChecking=no']
+        if ssh_key:
+            ssh_upd += ['-i', ssh_key]
+        ssh_upd += [f'{user}@{host}', update_cmd]
+        ssh_upd = (['sshpass', '-p', password] + ssh_upd) if (pass_file and os.path.isfile(pass_file)) else ssh_upd
+        try:
+            upd = subprocess.run(ssh_upd, env=cmd_env, timeout=3600)
+            if upd.returncode == 0:
+                print('[INFO] update_db.py exécuté sur sitatst — interface metrics à jour.')
+            else:
+                print(f'[WARN] update_db.py a échoué sur sitatst (code {upd.returncode}).')
+        except Exception as e:
+            print(f'[WARN] Déclenchement update_db.py distant impossible : {e}')
+
+
+onsuccess:
+    send_email(
+        subject=f'✅ [{_CURRENT_RUN_TAG}] Pipeline RNA-seq terminé avec succès',
+        body=(
+            f'Le pipeline a terminé sans erreur le '
+            f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.\n'
+            f'Run : {_CURRENT_RUN_TAG}'
+        )
+    )
+    # Transfert bloquant des résultats vers sitatst + mise à jour interface metrics
+    try:
+        rsync_results_to_sitatst()
+    except Exception as e:
+        print(f'[WARN] Synchronisation sitatst : erreur non bloquante : {e}')
 
 onerror:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    failures = collect_failed_logs(log_dir="log")
+    now      = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    failures = collect_failed_logs(log_dir='log')
     if failures:
-        details = []
+        parts = []
         for f in failures:
-            details.append(
-                f"Rule      : {f['rule']}\n"
-                f"Exit code : {f['exit_code']}\n"
-                f"Timestamp : {f['timestamp']}\n"
-                f"Log file  : {f['log_path']}\n"
-                f"--- last 30 lines ---\n{f['tail']}\n"
+            parts.append(
+                f"Règle      : {f['rule']}\n"
+                f"Exit code  : {f['exit_code']}\n"
+                f"Timestamp  : {f['timestamp']}\n"
+                f"Log file   : {f['log_path']}\n"
+                f"--- 30 dernières lignes ---\n{f['tail']}"
             )
         body = (
-            f"An error occurred during the pipeline at {now}.\n\n"
-            + "\n" + "="*60 + "\n"
-            + ("\n" + "="*60 + "\n").join(details)
+            f'Erreur dans le pipeline le {now}.\nRun : {_CURRENT_RUN_TAG}\n\n'
+            + ('\n' + '='*60 + '\n').join(parts)
         )
     else:
         body = (
-            f"An error occurred during the pipeline at {now}.\n"
-            "No structured log entries found — check Snakemake's own output.\n"
-            "Log directory: log/"
+            f'Erreur dans le pipeline le {now}.\nRun : {_CURRENT_RUN_TAG}\n'
+            'Aucun log structuré trouvé — consultez la sortie Snakemake.\n'
+            'Répertoire de logs : log/'
         )
-    send_email(
-        subject="❌ Snakemake pipeline failed",
-        body=body
-    )
-
+    send_email(subject=f'❌ [{_CURRENT_RUN_TAG}] Pipeline RNA-seq — ERREUR', body=body)

@@ -1,101 +1,100 @@
-### example : for i in /data2/Exome_analysis_BC/Server_S_exome/MAGNIS/Runs_nextseq/*RNASEQ/pipeline_v0/kallisto_strand;do echo $i; for j in $i/*; do echo $j;sudo /home/ldosouto/miniconda3/envs/fraser/bin/Rscript tx2gene.R $j/abundance.h5; done; done  ###
-
 library(dplyr)
 library(purrr)
 library(rtracklayer)
 
-
-# Check if the correct number of command line arguments is provided
-if (length(commandArgs(trailingOnly = TRUE)) != 3) {
-	  stop("Please provide the output directory of run analysis.")
+# ── Arguments ─────────────────────────────────────────────────────────────────
+args <- commandArgs(trailingOnly = TRUE)
+if (length(args) != 4) {
+  stop("Usage: Rscript create_matrice_tpm_gene_by_run.R <fastq_parent> <matrix_dir> <gtf> <current_run_tag>")
 }
 
-# Retrieve the abundance file path from command line argument
-dir <- commandArgs(trailingOnly = TRUE)[1]
-folder <- commandArgs(trailingOnly = TRUE)[2]
-gtf <- commandArgs(trailingOnly = TRUE)[3]
+fastq_parent    <- args[1]
+matrix_dir      <- args[2]
+gtf             <- args[3]
+current_run_tag <- args[4]   # ex: 20260610_RUN50_NextSeq_High_16RNASEQ
 
+# ── GTF mapping ───────────────────────────────────────────────────────────────
+gtf_data  <- import(gtf)
+gene_info <- unique(as.data.frame(gtf_data)[, c("gene_id", "gene_name")])
 
-# Read the GTF file
-gtf_data <- import(gtf)
-# Extract gene name from the GTF data
-gene_info <- as.data.frame(gtf_data)[, c("gene_id", "gene_name")]
-# Filter unique gene entries
-gene_info <- unique(gene_info)
-
-
-# Check if the file exists
-#if (!file.exists(abundance_file)) {
-#	  stop("The specified abundance file does not exist.")
-#}
-
-# Initialize an empty list to store sample names and file paths
-sampleTable <- list()
-
-# Specify the root directory where gene count files are located
-root_dir <-  paste0(dir, "/pipeline_v0/kallisto_bed/")
-
-# List all directories in the root directory
+# ── Collect abundance files (run courant uniquement) ──────────────────────────
+root_dir    <- file.path(fastq_parent, "pipeline_v0", "kallisto_bed")
 directories <- list.dirs(root_dir, full.names = TRUE)
 
-# Loop through each directory
+sampleTable <- list()
 for (dir in directories) {
-  # Get the sample name from the directory name
   sample <- basename(dir)
-  # List all files in the directory
-  files <- list.files(dir, full.names = TRUE, pattern = "abundance_gene_level_counts.tsv")
-  #print(files)
-  # Loop through each file
+  files  <- list.files(dir, full.names = TRUE,
+                       pattern = "abundance_gene_level_counts.tsv")
   for (file in files) {
-     # Add the sample name and file path to the sampleTable list
-     sampleTable[[length(sampleTable) + 1 ]] <- list(sample = sample, path = file)
+    sampleTable[[length(sampleTable) + 1]] <- list(sample = sample, path = file)
   }
 }
-#print(sampleTable)
-# Convert the list to a data frame
-matrice <- do.call(rbind, sampleTable)
-#print(matrice)
-sampleTable=as.data.frame(matrice)
-#print(sampleTable$sample)
 
-lst <- sampleTable$path
-names(lst) <- sampleTable$sample
-
-# Function to extract sample ID from the file path
-get_sample_id <- function(x) {
-	  dirname <- dirname(x)
-  basename(dirname)
+if (length(sampleTable) == 0) {
+  stop(paste0("[ERROR] Aucun fichier abundance_gene_level_counts.tsv trouvé sous ", root_dir))
 }
 
+sampleTable <- as.data.frame(do.call(rbind, sampleTable))
 
-## making a list of data frames with row and column names while removing last five lines from HTSeq that contains the features and ambiguous read infromation
+# ── Validation : tous les échantillons du run courant doivent être présents ───
+# Les sous-dossiers kallisto_bed/{sample}/ correspondent aux wildcards {sample}
+# du run courant (les FASTQ n'existent que pour ce run).
+expected_samples <- basename(directories[directories != root_dir])
+expected_samples <- expected_samples[nchar(expected_samples) > 0]
+found_samples    <- as.character(sampleTable$sample)
+missing_samples  <- setdiff(expected_samples, found_samples)
+
+if (length(missing_samples) > 0) {
+  msg <- paste0(
+    "[ERROR] ", length(missing_samples), " échantillon(s) du run courant (",
+    current_run_tag, ") absents de la matrice TPM Kallisto :\n",
+    "  ", paste(missing_samples, collapse = ", "), "\n",
+    "  → Vérifiez que kallisto2gene a tourné pour ces échantillons ",
+    "(logs sous log/kallisto/<sample>/)"
+  )
+  message(msg)
+  quit(status = 2)
+} else {
+  message(paste0("[OK] Tous les échantillons du run courant sont présents dans la matrice TPM (",
+                 length(found_samples), " échantillons)"))
+}
+
+# ── Build TPM matrix ──────────────────────────────────────────────────────────
+lst        <- setNames(as.character(sampleTable$path),
+                       as.character(sampleTable$sample))
+
+get_sample_id <- function(x) basename(dirname(x))
+
 dfList <- lapply(lst, function(x) {
-	   print(x)
-           read.csv(x, sep = "\t", header = TRUE, row.names = 1, col.names = c("genes", get_sample_id(x)))})
+  message(x)
+  read.csv(x, sep = "\t", header = TRUE, row.names = 1,
+           col.names = c("genes", get_sample_id(x)))
+})
 
-
-## combining all the dataframes into single dataframe
 mat <- bind_cols(dfList)
-#mat<-mat[,-1]
-print(head(mat))
-# Return the gene-level counts or save them to a file
-write.table(mat, file = paste0(root_dir, "/matrice_gene_tpm.tsv"), sep = "\t", quote = FALSE,col.names=NA)
 
+dir.create(matrix_dir, showWarnings = FALSE, recursive = TRUE)
+write.table(mat,
+            file  = file.path(matrix_dir, "matrice_gene_tpm.tsv"),
+            sep   = "\t", quote = FALSE, col.names = NA)
 
+# ── Gene-name mapping ─────────────────────────────────────────────────────────
+rownames_mat <- row.names(mat)
+mat_bind     <- cbind(mat)
+rownames(mat_bind) <- rownames_mat
+colnames(mat_bind) <- gsub("^X", "", colnames(mat_bind))
 
-rownames_mat <-row.names(mat)
+row_names     <- data.frame(Ensembl_ID = rownames(mat_bind))
+matched_genes <- merge(gene_info, row_names, by.x = "gene_id", by.y = "Ensembl_ID")
+matched_genes$gene_name[is.na(matched_genes$gene_name)] <-
+  as.character(matched_genes$gene_id[is.na(matched_genes$gene_name)])
 
-   mat_bind=cbind(mat)
-   rownames(mat_bind)<-rownames_mat
-   colnames(mat_bind) <- gsub("^X", "", colnames(mat_bind))
-   row_names <- as.data.frame(rownames(mat_bind))
-   names(row_names) <- "Ensembl_ID"
+rownames(mat_bind) <- make.unique(matched_genes$gene_name)
+colnames(mat_bind) <- gsub("^X", "", colnames(mat_bind))
 
-   matched_genes <- merge(gene_info, row_names, by.x = "gene_id", by.y = "Ensembl_ID")
-   matched_genes$gene_name[is.na(matched_genes$gene_name)] <- as.character(matched_genes$gene_id[is.na(matched_genes$gene_name)])
-   rownames(mat_bind) <- make.unique(matched_genes$gene_name)
-   matriceTPM2 <- mat_bind
-   colnames(matriceTPM2) <- gsub("^X", "", colnames(matriceTPM2))
-   #print(head(mat_bind))
-   write.table(matriceTPM2, file = paste0(root_dir, "/matrice_gene_tpm_gene.tsv"), sep = "\t", quote = FALSE, col.names=NA)
+write.table(mat_bind,
+            file  = file.path(matrix_dir, "matrice_gene_tpm_gene.tsv"),
+            sep   = "\t", quote = FALSE, col.names = NA)
 
+message(paste0("✅ Matrices TPM sauvegardées dans ", matrix_dir))

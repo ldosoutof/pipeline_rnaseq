@@ -1,33 +1,47 @@
 import os
+import re
 import pandas as pd
 import argparse
 
-# Set up argument parser
-parser = argparse.ArgumentParser(description="Split input file by sampleID and save to separate files")
+def extract_short_id(s):
+    """
+    Extrait l'ID court depuis n'importe quel format connu :
+      26D0643                              -> 26D0643
+      26D0643-MOINS                        -> 26D0643
+      25D2693-STEMC-PUROMOINS-AVITI        -> 25D2693
+      X26D0643                             -> 26D0643  (ancien format R avec préfixe X)
+      25D2693.STEMC.PUROMOINS.AVITI        -> 25D2693  (format R avec points)
+    """
+    s = str(s).lstrip('X')
+    return re.split(r'[.\-]', s)[0]
+
+parser = argparse.ArgumentParser(description="Split OUTRIDER output by sampleID into per-sample files")
 parser.add_argument('-i', '--input_file', required=True, help="Path to the input file")
-parser.add_argument('-b', '--basename', required=True, help="Base name for the output files")
+parser.add_argument('-b', '--basename',   required=True, help="Base name / output directory")
 args = parser.parse_args()
 
-# Read the input file
 df = pd.read_csv(args.input_file, sep='\t', index_col=False, header=0)
-#print(df)
 
+# Strip quotes from column names (old R write.table format)
+df.columns = df.columns.str.strip('"')
 
-# Ensure the folder from the basename exists
-output_dir = os.path.dirname(args.basename)  # Extract the directory part from the basename
-print(output_dir)
-if output_dir and not os.path.exists(output_dir):  # Check if directory exists, and create if it doesn't
+# Normalise sampleID column name
+if 'sampleID' not in df.columns:
+    candidates = [c for c in df.columns if 'sample' in c.lower()]
+    if candidates:
+        df = df.rename(columns={candidates[0]: 'sampleID'})
+        print(f"[INFO] Renamed '{candidates[0]}' to 'sampleID'")
+    else:
+        raise KeyError(f"No sampleID column found. Columns: {list(df.columns)}")
+
+print(f"[INFO] {len(df)} rows, {df['sampleID'].nunique()} unique sampleIDs")
+
+output_dir = os.path.dirname(args.basename)
+if output_dir and not os.path.exists(output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
-
-# Group by sampleID and write to separate files
 for sample_id, group in df.groupby('sampleID'):
-    clean_id = str(sample_id).lstrip('X').split('.')[0]
-    clean_id = str(clean_id).lstrip('X').split('_')[0]
-    # Create a filename based on the sampleID and the provided basename
-    output_file = os.path.join(output_dir, f'{output_dir}/{clean_id}.outrider.tab')
-
-    # Write the group to the file
+    short_id = extract_short_id(sample_id)
+    output_file = os.path.join(output_dir, f'{short_id}.outrider.tab')
     group.to_csv(output_file, sep='\t', index=False)
-
-    print(f'Created file: {output_file}')
+    print(f'[OK] {sample_id} -> {output_file}')

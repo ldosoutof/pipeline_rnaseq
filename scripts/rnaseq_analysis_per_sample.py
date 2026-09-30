@@ -83,19 +83,73 @@ def _process_and_save_sample(args):
 
     elif tool_name == 'fraser':
         # chrom = seqnames (copie directe)
-        df['chrom'] = df['seqnames'] if 'seqnames' in df.columns else None
+        df['chrom'] = df['seqnames'].astype(str) if 'seqnames' in df.columns else None
 
-        # hgncSymbol → gene_name pour uniformiser les annotations
-        if 'hgncSymbol' in df.columns:
+        # hgncSymbol → gene_name
+        if 'hgncSymbol' in df.columns and df['hgncSymbol'].notna().any():
             df['gene_name'] = df['hgncSymbol']
             gene_col = 'gene_name'
         elif 'gene_name' in df.columns and df['gene_name'].notna().any():
             gene_col = 'gene_name'
         else:
-            gene_col = None  # pas d'annotation possible
+            gene_col = None
 
-        # Résolution gene_id (ENSG) depuis le GTF par symbole HGNC
-        if gene_col and gtf_dict and 'by_gene_name' in gtf_dict:
+        # Compléter gene_id à partir de gene_name via le GTF (by_gene_name).
+        # Le bloc hgncSymbol ci-dessus remplit gene_name sans gene_id : on récupère
+        # l'ENSG correspondant au symbole HGNC pour que les deux soient renseignés.
+        if gene_col == 'gene_name' and gtf_dict and 'by_gene_name' in gtf_dict:
+            by_name = gtf_dict['by_gene_name']
+            if 'gene_id' not in df.columns:
+                df['gene_id'] = None
+            missing_id = df['gene_id'].isna() | df['gene_id'].astype(str).isin(('', 'nan', 'None'))
+            df.loc[missing_id, 'gene_id'] = df.loc[missing_id, 'gene_name'].map(
+                lambda g: by_name.get(str(g), {}).get('gene_id')
+            )
+
+        # Coordinate-based GTF lookup for rows missing gene_name
+        if gtf_dict and 'by_interval' in gtf_dict and gtf_dict['by_interval']:
+            interval_index = gtf_dict['by_interval']
+            gnames = []
+            gids   = []
+            for _, row in df.iterrows():
+                chrom = str(row.get('seqnames', ''))
+                try:
+                    s = int(row.get('start', 0))
+                    e = int(row.get('end',   0))
+                except (ValueError, TypeError):
+                    gnames.append(None); gids.append(None); continue
+
+                # Check if gene_name already populated
+                existing = str(row.get('gene_name', '')) if gene_col else ''
+                if existing and existing not in ('', 'nan', 'None'):
+                    gnames.append(existing)
+                    gids.append(str(row.get('gene_id', '')) or None)
+                    continue
+
+                if chrom not in interval_index:
+                    gnames.append(None); gids.append(None); continue
+
+                mode, tree, entries = interval_index[chrom]
+                found_name = found_id = None
+                if mode == 'ncls':
+                    hits = list(tree.find_overlap(s, e))
+                    if hits:
+                        found_name = entries[hits[0][2]].get('gene_name')
+                        found_id   = entries[hits[0][2]].get('gene_id')
+                else:
+                    for entry in entries:
+                        if entry['start'] <= e and entry['end'] >= s:
+                            found_name = entry.get('gene_name')
+                            found_id   = entry.get('gene_id')
+                            break
+                gnames.append(found_name)
+                gids.append(found_id)
+
+            df['gene_name'] = gnames
+            df['gene_id']   = gids
+            gene_col = 'gene_name'
+
+        elif gene_col and gtf_dict and 'by_gene_name' in gtf_dict:
             by_name = gtf_dict['by_gene_name']
             df['gene_id'] = df[gene_col].map(
                 lambda g: by_name.get(str(g), {}).get('gene_id')
@@ -172,8 +226,27 @@ def _gtf_to_dict(gtf_df):
         [['gene_id', 'gene_id_clean', 'chrom', 'start', 'end', 'strand']]
         .to_dict('index')
     )
+    # Interval index for coordinate-based FRASER annotation
+    # Uses ncls if available, falls back to sorted list for linear scan
+    by_interval = {}
+    try:
+        import numpy as np
+        from ncls import NCLS
+        for chrom, grp in gtf_df.groupby('chrom'):
+            chrom = str(chrom)
+            entries = grp[['start','end','gene_id','gene_name']].to_dict('records')
+            starts = np.array([e['start'] for e in entries], dtype=np.int64)
+            ends   = np.array([e['end']   for e in entries], dtype=np.int64)
+            ids    = np.arange(len(entries), dtype=np.int64)
+            by_interval[chrom] = ('list', None, entries)  # Force list mode for picklability
+    except ImportError:
+        # Linear scan fallback — group entries by chromosome
+        for chrom, grp in gtf_df.groupby('chrom'):
+            chrom = str(chrom)
+            entries = grp[['start','end','gene_id','gene_name']].to_dict('records')
+            by_interval[chrom] = ('list', None, entries)
 
-    return {'by_gene': by_gene, 'by_gene_name': by_gene_name}
+    return {'by_gene': by_gene, 'by_gene_name': by_gene_name, 'by_interval': by_interval}
 
 
 def _gnomad_to_dict(gnomad_df):
@@ -465,26 +538,64 @@ class RNASeqProcessorPerSample:
     # Filtrage samples
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _short_id(s):
+        """
+        Extrait l'ID court (ex: 26D0643) depuis n'importe quel format :
+          26D0643-MOINS                  -> 26D0643
+          25D2693-STEMC-PUROMOINS-AVITI  -> 25D2693
+          26D0643.MOINS                  -> 26D0643
+          26D0643                        -> 26D0643
+        """
+        import re as _re
+        return _re.split(r'[-_.]', str(s))[0]
+
     def _get_matched_samples(self, data_samples):
+        """
+        Résolution en deux passes :
+          1. Match exact (noms identiques)
+          2. Match normalisé : compare le short ID des deux côtés
+             pour gérer le cas où samples.txt contient "26D0643-MOINS"
+             mais sampleID dans le fichier annoté est "26D0643"
+             (normalisé par annotation_outrider_hits_bis2.py).
+        """
         if self.mode == 'all':
             return list(data_samples)
+
+        # Dictionnaire short_id -> [full_name_in_data]
+        data_by_short = {}
+        for ds in data_samples:
+            data_by_short.setdefault(self._short_id(ds), []).append(ds)
+
+        # Short IDs des samples demandés
+        requested_shorts = {self._short_id(s): s for s in self.samples}
+
         matched = []
+        found_requested = set()
+
+        for short, data_full_list in data_by_short.items():
+            if short in requested_shorts:
+                matched.extend(data_full_list)
+                found_requested.add(requested_shorts[short])
+
+        # Conserver aussi un match exact pour les cas où partial_match est activé
         if self.partial_match:
             for ds in data_samples:
-                if any(ls in ds for ls in self.samples):
-                    matched.append(ds)
-        else:
-            s_set = set(self.samples)
-            matched = [s for s in data_samples if s in s_set]
-        logger.info(f"{len(matched)}/{len(self.samples or [])} samples trouves")
-        found = set()
-        for ds in matched:
-            for ls in (self.samples or []):
-                if (self.partial_match and ls in ds) or ls == ds:
-                    found.add(ls)
-        not_found = set(self.samples or []) - found
+                if ds not in matched:
+                    if any(ls in ds for ls in self.samples):
+                        matched.append(ds)
+
+        logger.info(
+            f"{len(matched)} samples correspondants trouvés "
+            f"({len(found_requested)}/{len(self.samples or [])} demandés)"
+        )
+
+        not_found = set(self.samples or []) - found_requested
         if not_found:
-            logger.warning(f"Samples non trouves : {sorted(not_found)}")
+            logger.warning(
+                f"Samples non trouvés dans les données "
+                f"(vérifier nom/normalisation) : {sorted(not_found)}"
+            )
         return matched
 
     def _filter_data(self, data, label):

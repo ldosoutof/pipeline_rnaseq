@@ -1,57 +1,177 @@
-# params
+# =============================================================================
+# config_template.yml — Pipeline RNA-seq
+# =============================================================================
+# Copier ce fichier, renommer en config.yml et remplir les chemins.
+# Les chemins doivent être absolus ou relatifs au workdir (OUTPUT_DIR).
+# Tous les chemins ci-dessous sont des EXEMPLES — adaptez à votre installation.
+# =============================================================================
+
+# --- Répertoire racine de tous les runs (utilisé pour les matrices multi-run) -
+runs_dir: "/path/to/runs/"
+
+# --- Répertoire de production du run courant --------------------------------
 configuration:
-  outputDir: WORKDIR
-  samples: {SAMPLES}
-  fastq_dir : FASTQDIR
-  pipeline_dir : 
+  fastq_dir:    "/path/to/run/fastq/"
+  outputDir:    "/path/to/run/"
+  pipeline_dir: "/path/to/pipeline/"
+  # Dossier des environnements conda créés par Snakemake (= --conda-prefix de
+  # launch_template.sh). Utilisé pour tracer les versions des outils.
+  conda_prefix: "~/pipeline/RNASEQ/routine/conda_env"
+  samples:
+    - "SAMPLE_ID_1"
+    - "SAMPLE_ID_2"
 
-run_annot_sake: true
+# --- Référentiels génomiques (GRCh38) ----------------------------------------
+genome:       "/path/to/references/GRCh38/genome.fa"
+star_genome:  "/path/to/references/GRCh38/STAR/"
+kallisto_idx: "/path/to/references/GRCh38/kallisto/transcripts.idx"
+rsem_genome:  "/path/to/references/GRCh38/rsem/hg38"
+# --- Annotations génomiques ---------------------------------------------------
+# DEUX sources d'annotation sont utilisées intentionnellement :
+#
+#   gtfFile    → pipeline NORMAL (HTSeq / Kallisto / OUTRIDER htseq)
+#                Doit être un GTF Ensembl (ex: Homo_sapiens.GRCh38.106.gtf).
+#                Requis pour build_geneid_ensg_map.py (db_xref GeneID: → ENSG).
+#                Attribut gene_id = ENSG directement.
+#
+#   gtf_refseq → pipeline HYPER (featureCounts CDS / OUTRIDER hyper)
+#                Deux formats supportés par map_refseq_to_ensembl :
+#                  a) GTF NCBI RefSeq : gene_id = GeneID numérique
+#                     → remapping GeneID→ENSG via gid_map (Ensembl GTF requis)
+#                  b) GTF GENCODE (ex: gencode.v49.basic.annotation.nochr.gtf) :
+#                     gene_id = ENSG.version → version strippée automatiquement,
+#                     gid_map non utilisé (avertissement dans le log)
+#                  c) GTF Ensembl (même que gtfFile) : gene_id = ENSG plain → pass-through
+#
+#                ⚠ Les deux voies (htseq vs featureCounts) utilisent des espaces
+#                de gènes légèrement différents selon la version d'annotation.
+#                C'est voulu : la voie hyper cible les CDS RefSeq pour capturer
+#                les aberrations d'expression dans les régions codantes uniquement.
+#                Valider que les gènes du panel DI sont couverts dans les deux GTF
+#                (script annotation_coverage.py — voir docs/annotation_coverage.md).
+#
+gtfFile:      "/path/to/references/GRCh38/annotation/Homo_sapiens.GRCh38.106.gtf"
+gtf_refseq:   "/path/to/references/GRCh38/annotation/gencode.v49.basic.annotation.nochr.gtf"
 
-# Pipeline output subdirectory name under each run folder (default: pipeline_v0)
-pipeline_output_dir: pipeline_v0
+# --- BED files ---------------------------------------------------------------
+bed:     "/path/to/references/bed/covered.bed"
+padded:  "/path/to/references/bed/padded.bed"
+di_bed:  "/path/to/references/bed/DI.bed"
+rseq_bed: "/path/to/references/bed/rseqc.bed"
 
-# Paramètres indépendants du JOB
-di_bed: /dataref/bank/human/bed/DI_green_300425.tsv
-fraser_count: /datawork2/genetique/RNASeq/diag/prod/Fraser2_2/
-fraser_count_hyper: /datawork2/genetique/RNASeq/diag/prod/Fraser2_2_hyper/
-genome: /dataref/bank/human/genome/GRCh38/ensembl/Homo_sapiens.GRCh38.dna.primary_assembly.fa
-gtfFile: /dataref/bank/human/annotation/GRCh38/ensembl/current/Homo_sapiens.GRCh38.106.gtf
-hpo: /dataref/bank/human/annotation/GRCh38/hpo/phenotype.hpoa
-kallisto_idx: /dataref/bank/human/genome/GRCh38/kallisto/kallisto_bed/transcripts_bed.idx
-matrice_tpm: /datawork2/genetique/RNASeq/diag/matrices_comptage_tpm_gene/
-matrices: /datawork2/genetique/RNASeq/diag/matrices_comptage/
-padded: /dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Padded_wo_chr.bed
-panelapp: /dataref/bank/human/annotation/GRCh38/current/DI_green.tsv
-pheno: /dataref/bank/human/annotation/GRCh38/hpo/genes_to_phenotype.txt
-pli: /dataref/bank/human/annotation/GRCh38/PLI.vcf
-rsem_genome: /dataref/bank/human/genome/rsem/hg38
-rseq_bed: /dataref/bank/human/bed/rseqc_hg38.bed
-run_annot_sake: true
-star_folder: /dataref/bank/human/genome/GRCh38/STAR/
-star_genome: /dataref/bank/human/genome/GRCh38/STAR/
-bed: /dataref/bank/human/bed/SureSelect_V8/S33266340_hs_hg38/S33266340_Covered_wo_chr.bed
-outrider_blacklist: "/datawork2/genetique/RNASeq/diag/prod/blacklist_outrider.txt"
-fraser_blacklist: "/datawork2/genetique/RNASeq/diag/prod/blacklist_fraser.txt"
-pca_blacklist: "/datawork2/genetique/RNASeq/diag/prod/blacklist_PCA.txt"
-runs_dir: "/datawork2/genetique/RNASeq/diag/prod/"
+# --- Fichiers d'annotation ---------------------------------------------------
+panelapp: "/path/to/references/annotation/panelapp_DI_green.tsv"
+hpo:      "/path/to/references/annotation/phenotype.hpoa"
+pheno:    "/path/to/references/annotation/genes_to_phenotype.txt"
+pli:      "/path/to/references/annotation/PLI.vcf"
+gnomad:   "/path/to/references/annotation/gnomad_v4_by_gene.tsv"
+mendeliome: "/path/to/references/annotation/mendeliome.json"
 
-# Keywords that identify blood RNA-seq samples eligible for FRASER
-# (space-separated, case-insensitive). Tissue samples are excluded.
-fraser_keywords: "MOINS PUROMINS"
-# URL of the Prometheus Pushgateway — set to empty string to disable pushing
-prometheus_gateway: "http://localhost:9091"
+# --- Matrices de comptage (historique multi-run) -----------------------------
+matrices:    "/path/to/data/matrices_htseq/"
+matrice_tpm: "/path/to/data/matrices_tpm/"
+geneid_map:  "/path/to/data/geneid_to_ensg.tsv"
 
-# RefSeq GTF used by featureCounts (CDS counting)
-gtf_refseq: /dataref/bank/human/annotation/GRCh38/gencode/v49/gencode.v49.basic.annotation.woreadthrough.woretainedintron.nochr.gtf
-# Pre-built GeneID→ENSG mapping table (built once by build_geneid_map rule)
-geneid_map: /datawork2/genetique/RNASeq/diag/prod/geneid_to_ensg.tsv
+# --- FRASER ------------------------------------------------------------------
+fraser_count:       "/path/to/data/fraser_counts/"
+fraser_count_hyper: "/path/to/data/fraser_counts_hyper/"
 
-# --- Per-sample analysis / ZIP bundling (04_make_zip) -----------------------
-# gnomAD constraint table (v2 or v4 TSV)
-gnomad: /dataref/bank/human/annotation/GRCh38/gnomad/gnomad_v4_by_gene.tsv
-# Mendeliome JSON (Australia format)
-mendeliome: /dataref/bank/human/annotation/GRCh38/mendeliome/mendeliome_australia.json
-# Number of parallel workers for per-sample analysis (default: 4)
-# ANALYSIS_WORKERS: 4
-# Optional p-value filter applied before per-sample output (e.g. 0.05)
-# PVALUE_FILTER: 0.05
+# --- Blacklist unifiée (TSV : sample_id <TAB> tool <TAB> reason) ------------
+# tool : outrider | fraser | pca | all
+# Voir template/blacklist_template.tsv pour le format
+blacklist: "/path/to/data/blacklist.tsv"
+
+# Runs à exclure des analyses spécifiques (remplace tout filtre hardcodé dans le code).
+# Liste séparée par des virgules, ex: "RUN17,RUN23" ou "20231122_RUN17_NextSeq_Mid_8RNASEQ"
+# Laisser vide pour ne rien exclure.
+#
+# fraser_excluded_runs → utilisé par fraser_config_create.py (BAM scan)
+# pca_excluded_runs   → utilisé par generate_and_run_param_notebook (PCA / notebook)
+# Si un run est problématique pour les deux, le renseigner dans les deux clés.
+fraser_excluded_runs: ""
+pca_excluded_runs:    ""
+
+# --- Mots-clés sang (pour filtrer les échantillons OUTRIDER / FRASER) --------
+fraser_keywords: "MOINS PUROMOINS"
+
+# --- Fichier Magnis (optionnel — enrichissement ID_SPICE dans annotation FRASER) -
+magnis_file: ""
+
+# --- DeepVariant (règle 07_variantCalling_bis — activé par défaut) -----------
+# Analyse du biais d'inactivation X (DeepVariant chrX, modèle WES).
+# Mettre run_variant_calling: false pour la désactiver sur un run donné.
+# Nécessite Singularity/Apptainer et --use-singularity au lancement de Snakemake.
+run_variant_calling: true
+deepvariant_image: "docker://google/deepvariant:1.8.0"
+chrx_bed:    "/path/to/references/bed/chrX_capture.bed"
+g1000_chrx:  "/path/to/references/annotation/1000G_chrX.vcf.gz"
+gnomad_chrx: "/path/to/references/annotation/gnomad_chrX.vcf.bgz"
+
+# --- Contrôle positif biais X (optionnel) ------------------------------------
+x_bias_control_vaf:   ""
+x_bias_control_label: ""
+
+# --- Base de données QC SQLite -----------------------------------------------
+# Chemin vers la base SQLite consolidée (tous runs).
+# Laissez vide pour désactiver la mise à jour automatique.
+# Le dashboard app_dashboard.py lit ce fichier.
+qc_db: ""
+
+# --- Snakemake binary (pour save_rulegraph) ----------------------------------
+# Laisser "snakemake" si snakemake est dans le PATH de l'env conda utilisé.
+# Sinon spécifier le chemin complet ex: "/appli/miniconda3/envs/snakemake/bin/snakemake"
+snakemake_bin: "snakemake"
+
+# --- Prometheus (optionnel) --------------------------------------------------
+# URL complète du Pushgateway sur le serveur de résultats
+prometheus_gateway: "http://grafana-server:9092"
+
+# Authentification HTTP Basic (laisser vides si pas d'auth)
+prometheus_gateway_user:     ""
+prometheus_gateway_password: ""   # utiliser sudo_password_file pour les secrets
+
+# Dossier local de fallback si le gateway est indisponible
+# Les métriques y sont stockées et peuvent être renvoyées avec --replay-fallback
+prometheus_fallback_dir: ""       # ex: "/path/to/run/pipeline_v0/metrics/fallback"
+
+# --- Notifications mail -------------------------------------------------------
+smtp_host: "localhost"
+smtp_port: 25
+mail_from: "pipeline@institution.fr"
+mail_to:
+  - "user@institution.fr"
+
+# --- Seuils d'alerte QC (fichier metrics/qc_warnings.tsv) --------------------
+warn_max_dup:          40.0    # % duplication (Picard MarkDuplicates)
+warn_max_out_hyper:    20      # nb événements OUTRIDER hyper par échantillon
+warn_max_fraser_hyper: 20      # nb événements FRASER hyper par échantillon
+warn_max_hba_total:    5000.0  # TPM cumulé HBA1+HBA2+HBB (contamination érythrocytaire)
+
+# --- Synchronisation des résultats vers sitatst (interface metrics) -----------
+# Déclenché en fin de pipeline (onsuccess), BLOQUANT : transfère pipeline_v0/
+# vers sitatst puis met à jour la base QC lue par l'interface (app_dashboard.py).
+sync_sitatst:
+  enabled:    false                       # true pour activer le transfert
+  host:       "172.27.253.113"            # serveur sitatst (interface metrics)
+  user:       "ldosouto"
+  dest_path:  "/data2/Exome_analysis_BC/Server_S_exome/MAGNIS/Runs_nextseq"  # convention existante : <run>/pipeline_v0/ ajouté automatiquement
+  ssh_key:    "~/.ssh/id_ovh_to_sitatst"  # clé SSH dédiée OVH->sitatst (recommandé)
+  pass_file:  ""                          # alternative : fichier chmod 600 avec mot de passe (si pas de clé)
+  update_db:  true                        # déclencher update_db.py sur sitatst après transfert
+  remote_db:  "/home/ldosouto/rnaseq_qc.db"          # base lue par l'interface (confirmé)
+  remote_update_db_script: "/data2/Exome_analysis_BC/Server_S_exome/Projets_autre/test_laura/pipeline_clean/pipeline_clean/scripts/update_db.py"   # confirmé sur sitatst
+
+# --- CIBERSORTx : déconvolution cellulaire (LM22) -----------------------------
+# Estime les proportions de 22 types cellulaires immunitaires par échantillon.
+# Nécessite Apptainer + l'image CIBERSORTx (.SIF) + LM22.txt + un token Stanford.
+# ATTENTION (usage diagnostique) : LM22 est conçu pour tissu sanguin/immunitaire ;
+# valider la pertinence biologique pour vos échantillons. Le token appelle un
+# serveur externe (Stanford) — dépendance à évaluer en contexte ISO 15189.
+cibersortx:
+  enabled:    false                       # true pour activer la déconvolution
+  sif:        ""                          # ex: /appli/containers/cibersortx_fractions.sif
+  lm22:       ""                          # ex: /dataref/bank/human/annotation/cibersortx/LM22.txt
+  email:      ""                          # email enregistré sur cibersortx.stanford.edu
+  token_file: ""                          # fichier chmod 600 contenant le token (hors dépôt)
+  perm:       100                         # nb de permutations (p-value)
+  qn:         "FALSE"                      # quantile normalization : FALSE pour RNA-seq (TRUE = microarray)

@@ -12,7 +12,7 @@ parser.add_argument("--base", required=True, help="Base folder with TPM files")
 parser.add_argument("--mapping_file", required=True, help="GTF mapping file")
 parser.add_argument("--blacklist_file", required=True, help="Blacklist file")
 parser.add_argument("--samples_run", required=True, help="Run to include")
-parser.add_argument("--excluded_run", required=True, help="Run to exclude")
+parser.add_argument("--excluded_run", required=False, default="", help="Run to exclude (optional)")
 parser.add_argument("--keyword", required=True, help="Keyword to filter samples")
 parser.add_argument("--output_html", required=True, help="Path to save interactive HTML plot")
 parser.add_argument("--notebook_path", required=True, help="Path to save the generated notebook")
@@ -75,7 +75,8 @@ nb.cells.append(nbf.v4.new_code_cell("""
 pattern = f"{base}/*/pipeline_v0/kallisto_bed/*/abundance.tsv"
 files = [
     f for f in glob.glob(pattern)
-    if keyword in os.path.basename(os.path.dirname(f)) and excluded_run not in f
+    if keyword in os.path.basename(os.path.dirname(f))
+    and (not excluded_run or excluded_run not in f)
 ]
 print(f"✅ Found {len(files)} files")
 """))
@@ -144,19 +145,34 @@ print(f"✅ Aggregated gene-level TPM matrix shape: {gene_tpm.head()}")
 # 8) Clean columns and apply blacklist
 # =========================
 nb.cells.append(nbf.v4.new_code_cell("""
-short_names = gene_tpm.columns.to_series().apply(lambda x: re.split(r"[-_\\.]", str(x))[0])
+import os as _os
+# Renommer les colonnes avec le short ID (premier segment avant - _ .)
+# Garder la DERNIERE occurrence pour chaque short ID (run le plus récent)
+short_names = gene_tpm.columns.to_series().apply(lambda x: re.split(r"[-_.]", str(x))[0])
 last_occurrence = {short: i for i, short in enumerate(short_names)}
 final_indices = sorted(last_occurrence.values())
-gene_tpm = gene_tpm.iloc[:, final_indices]
-final_short_names = [short_names[i] for i in final_indices]
-gene_tpm.columns = final_short_names
+gene_tpm = gene_tpm.iloc[:, final_indices].copy()
+gene_tpm.columns = [short_names.iloc[i] for i in final_indices]
 print(f"✅ Columns cleaned, final shape: {gene_tpm.shape}")
 
 # Remove blacklisted samples
-blacklist_df = pd.read_csv(blacklist_file, sep="\\t", header=None)
-blacklist_samples = blacklist_df.iloc[:,0].astype(str).tolist()
+if _os.path.exists(blacklist_file) and _os.path.getsize(blacklist_file) > 0:
+    try:
+        blacklist_df = pd.read_csv(blacklist_file, sep="\\t")
+        if "sample_id" in blacklist_df.columns:
+            blacklist_samples = blacklist_df["sample_id"].astype(str).tolist()
+        else:
+            blacklist_samples = blacklist_df.iloc[:,0].astype(str).tolist()
+    except Exception as e:
+        print(f"[WARN] Blacklist non lue : {e}")
+        blacklist_samples = []
+else:
+    blacklist_samples = []
+    print("[INFO] Pas de blacklist — aucun échantillon exclu")
+
 df_expr = gene_tpm.drop(columns=[c for c in gene_tpm.columns if c in blacklist_samples], errors="ignore")
-df_expr = df_expr.loc[:, df_expr.columns.str.startswith('2')]  # keep only sequencing samples
+df_expr = df_expr.loc[:, df_expr.columns.str.startswith("2")]  # keep only sequencing samples
+print(f"✅ df_expr shape after blacklist: {df_expr.shape}")
 """))
 
 # =========================
@@ -180,31 +196,12 @@ df_pca['SampleShort'] = df_pca['Sample'].str.split(r'[-_]').str[0].str[:7]
 print(f"samples in pca RED: {df_pca['SampleShort']}")
 """))
 
-# =========================
-# 9b) Identify top contributing genes to PC1
-# =========================
-#nb.cells.append(nbf.v4.new_code_cell("""
-## Loadings: how much each gene contributes to each PC
-#loadings = pd.DataFrame(
-#    pca.components_.T,
-#    index=df_expr_t.columns,
-#    columns=[f'PC{i+1}' for i in range(pca.n_components)]
-#)
-#
-## Sort by absolute loading for PC1
-#top_genes_pc1 = loadings['PC1'].abs().sort_values(ascending=False).head(10)
-#top_genes_pc1_df = loadings.loc[top_genes_pc1.index, ['PC1']].copy()
-#top_genes_pc1_df['abs_loading'] = top_genes_pc1
-#print("Top 10 genes influencing PC1:")
-#display(top_genes_pc1_df)
-#"""))
 
 # =========================
 # 10) Assign colors
 # =========================
 nb.cells.append(nbf.v4.new_code_cell("""
 name_folders = glob.glob(f"{base}/{samples_run}/pipeline_v0/htseq/*")
-#samples_run_list = [os.path.basename(f.strip('/')).split(r'[-_]')[0] for f in name_folders]
 samples_run_list = [re.split(r'[-_.]', os.path.basename(f.strip('/')))[0][:7] for f in name_folders]
 print(f"samples: {samples_run_list}")
 test = df_pca['SampleShort'][0]

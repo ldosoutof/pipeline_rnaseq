@@ -1,22 +1,21 @@
 import os
 import subprocess
 
-SAMPLES_ID = [s[:7] for s in SAMPLES]
+# SAMPLES_ID, ACTIVE_OUTRIDER, ACTIVE_FRASER, ACTIVE_PCA sont définis dans pipeline.smk.
+# Ne pas les redéfinir ici — toute redéfinition locale masquerait la globale pour
+# tous les includes ultérieurs et divergerait des IDs courts calculés par
+# _extract_short_id (split sur [-_]) si le préfixe dépasse 7 caractères.
 
-# Fallback for active sample lists
-ACTIVE_OUTRIDER = ACTIVE_OUTRIDER if 'ACTIVE_OUTRIDER' in globals() else SAMPLES_ID
-ACTIVE_FRASER   = ACTIVE_FRASER   if 'ACTIVE_FRASER' in globals() else SAMPLES_ID
-ACTIVE_PCA      = ACTIVE_PCA      if 'ACTIVE_PCA' in globals() else SAMPLES_ID
+# ── Chemins de base ──────────────────────────────────────────────────────────
+METRICS_DIR = FASTQ_DIR + "/../pipeline_v0/metrics"
 
-# ----------------------
-# TOOL VERSIONS
-# ----------------------
+# ── Versions ─────────────────────────────────────────────────────────────────
 TOOL_VERSIONS = {
-    "picard": subprocess.getoutput("picard MarkDuplicates --version 2>&1 | head -1"),
+    "picard":   subprocess.getoutput("picard MarkDuplicates --version 2>&1 | head -1"),
     "samtools": subprocess.getoutput("samtools --version | head -1 | cut -d' ' -f2"),
     "mosdepth": subprocess.getoutput("mosdepth --version 2>&1 | head -1 | cut -d' ' -f3"),
-    "multiqc": subprocess.getoutput("multiqc --version | head -1 | cut -d' ' -f2"),
-    "python": subprocess.getoutput("python --version | cut -d' ' -f2"),
+    "multiqc":  subprocess.getoutput("multiqc --version | head -1 | cut -d' ' -f2"),
+    "python":   subprocess.getoutput("python --version | cut -d' ' -f2"),
 }
 
 # --------------------------
@@ -28,20 +27,20 @@ rule markDuplicate:
         dir = FASTQ_DIR,
         out = OUTPUT_REP
     output:
-        bam = temp(FASTQ_DIR + "/../pipeline_v0/dup/{sample}/{sample}_dup.bam"),
-        txt = FASTQ_DIR + "/../pipeline_v0/dup/{sample}/{sample}_dup.txt",
+        bam = temp(METRICS_DIR + "/dup/{sample}/{sample}_dup.bam"),
+        txt = METRICS_DIR + "/dup/{sample}/{sample}_dup.txt",
     conda:
         PIPELINE_DIR + "/envs/mark_env.yml"
     version: TOOL_VERSIONS["picard"]
     threads: 8
     resources:
         single_job = 2,
-        tmpdir = OUTPUT_REP + "/dup/tmp"
+        tmpdir     = OUTPUT_REP + "/dup/tmp"
     benchmark:
         "benchmarks/dup/{sample}.tsv"
     log:
         run_info = "log/dup/{sample}/log.txt",
-        time = "log/dup/{sample}/time.txt"
+        time     = "log/dup/{sample}/time.txt"
     params:
         log_start = lambda wc, input, threads: log_start("markDuplicate", wc, threads),
         log_end   = LOG_END
@@ -70,14 +69,14 @@ rule volcano:
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
     params:
-        scripts = PIPELINE_DIR,
+        scripts   = PIPELINE_DIR,
         log_start = lambda wc, input, threads: log_start("volcano", wc, threads),
         log_end   = LOG_END
     benchmark:
         "benchmarks/volcano/{samples_id}.tsv"
     log:
         run_info = "log/volcano/{samples_id}/log.txt",
-        time = "log/volcano/{samples_id}/time.txt"
+        time     = "log/volcano/{samples_id}/time.txt"
     threads: 2
     shell:
         """
@@ -113,13 +112,13 @@ rule boxplot:
         samples_id_str = lambda wc: ",".join(ACTIVE_OUTRIDER),
         scripts        = PIPELINE_DIR,
         log_start      = lambda wc, input, threads: log_start("boxplot", wc, threads),
-        log_end   = LOG_END
+        log_end        = LOG_END
     threads: 2
     benchmark:
         "benchmarks/boxplot/boxplot.tsv"
     log:
         run_info = "log/boxplot/log.txt",
-        time = "log/boxplot/time.txt"
+        time     = "log/boxplot/time.txt"
     shell:
         """
         set -euo pipefail
@@ -158,7 +157,7 @@ rule fraser_boxplot:
         "benchmarks/boxplot_fraser/boxplot.tsv"
     log:
         run_info = "log/boxplot_fraser/log.txt",
-        time = "log/boxplot_fraser/time.txt"
+        time     = "log/boxplot_fraser/time.txt"
     shell:
         """
         set -euo pipefail
@@ -179,9 +178,9 @@ rule rseqc:
     input:
         bam = rules.alignment_star.output.bam,
     output:
-        FASTQ_DIR + "/../pipeline_v0/rseqc/{sample}/{sample}.rseqc.results",
+        METRICS_DIR + "/coverage/{sample}/{sample}.rseqc.results",
     params:
-        bed = RSEQ_BED,
+        bed       = RSEQ_BED,
         log_start = lambda wc, input, threads: log_start("rseqc", wc, threads),
         log_end   = LOG_END
     conda:
@@ -191,7 +190,7 @@ rule rseqc:
         "benchmarks/rseqc/{sample}.tsv"
     log:
         run_info = "log/rseqc/{sample}/log.txt",
-        time = "log/rseqc/{sample}/time.txt"
+        time     = "log/rseqc/{sample}/time.txt"
     shell:
         """
         set -euo pipefail
@@ -211,74 +210,88 @@ rule bam_stats:
         dir = FASTQ_DIR,
         out = OUTPUT_REP
     output:
-        on_target = touch(FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_on_target.txt"),
-        padded    = touch(FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_padded.txt"),
-        stats     = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_stats.txt",
-        hist      = touch(FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}_hist.txt"),
-        #mos = FASTQ_DIR + "/../pipeline_v0/coverage/{sample}/{sample}.mosdepth.global.dist.txt",
+        on_target = METRICS_DIR + "/coverage/{sample}/{sample}_on_target.txt",
+        padded    = METRICS_DIR + "/coverage/{sample}/{sample}_padded.txt",
+        stats     = METRICS_DIR + "/coverage/{sample}/{sample}_stats.txt",
+        hist      = METRICS_DIR + "/coverage/{sample}/{sample}_hist.txt",
     params:
-        bed = BED,
+        bed        = BED,
         padded_bed = PADDED,
-        DI_bed = DI_BED,
-        log_start = lambda wc, input, threads: log_start("bam_stats", wc, threads),
-        log_end   = LOG_END
+        DI_bed     = DI_BED,
+        log_start  = lambda wc, input, threads: log_start("bam_stats", wc, threads),
+        log_end    = LOG_END
     threads: 12
     conda:
         PIPELINE_DIR + "/envs/comptage_env.yml"
     resources:
         single_job = 16,
-        tmpdir = OUTPUT_REP + "/coverage/tmp",
-        mem_gb = 500
+        tmpdir     = OUTPUT_REP + "/coverage/tmp",
+        mem_gb     = 500
     version: TOOL_VERSIONS["samtools"]
     log:
-        on_target  = "log/{sample}/stats_on_target.log",
-        padded     = "log/{sample}/stats_padded.log",
-        hist       = "log/{sample}/stats_hist.log",
+        on_target   = "log/{sample}/stats_on_target.log",
+        padded      = "log/{sample}/stats_padded.log",
+        hist        = "log/{sample}/stats_hist.log",
         insert_size = "log/{sample}/stats_insert_size.log",
-        run_info   = "log/coverage/{sample}/log.txt",
-        time       = "log/coverage/{sample}/time.txt"
+        run_info    = "log/coverage/{sample}/log.txt",
+        time        = "log/coverage/{sample}/time.txt"
     benchmark:
         "benchmarks/sam_stats/{sample}.tsv"
     shell:
         """
         set -euo pipefail
         {params.log_start}
-        mkdir -p $(dirname {output.on_target})
+        mkdir -p $(dirname {output.on_target}) {resources.tmpdir}
 
-        # Run tee with process substitutions; capture PIDs for explicit wait
-        samtools view {input.bam} -b -@ {threads} -F 260 | \
-        tee \
-            >(bedtools intersect -bed -u -abam stdin -b {params.bed} \
-                | wc -l > {output.on_target} 2>>{log.on_target} ; ) \
-            >(bedtools intersect -bed -u -abam stdin -b {params.padded_bed} \
-                | wc -l > {output.padded} 2>>{log.padded} ; ) \
-            >(bedtools coverage -hist -abam stdin -b {params.bed} \
-                | grep all > {output.hist} 2>>{log.hist} ; ) \
-        1>/dev/null
-        # Wait for all background subshells to flush their output files
-        wait
+        # Filter BAM once to a temp file — avoids re-reading the full BAM for each
+        # bedtools pass and eliminates the tee+process-substitution race condition.
+        TMP_BAM="{resources.tmpdir}/{wildcards.sample}_filtered.bam"
+        samtools view {input.bam} -b -@ {threads} -F 260 -o "$TMP_BAM"
+        samtools index -@ {threads} "$TMP_BAM"
 
-        # Ensure output files exist even if no reads intersected
-        touch {output.on_target} {output.padded} {output.hist}
+        # Pass 1 — on-target read count
+        bedtools intersect -bed -u -abam "$TMP_BAM" -b {params.bed} \
+            2>>{log.on_target} | wc -l > {output.on_target}
 
+        # Pass 2 — padded-target read count
+        bedtools intersect -bed -u -abam "$TMP_BAM" -b {params.padded_bed} \
+            2>>{log.padded} | wc -l > {output.padded}
+
+        # Pass 3 — coverage histogram (grep genome-wide 'all' summary lines)
+        bedtools coverage -hist -abam "$TMP_BAM" -b {params.bed} \
+            2>>{log.hist} | grep '^all' > {output.hist}
+
+        # Verify all three outputs are non-empty
+        for f in {output.on_target} {output.padded} {output.hist}; do
+            if [ ! -s "$f" ]; then
+                echo "[ERROR] Expected non-empty output: $f" >> {log.run_info}
+                exit 1
+            fi
+        done
+
+        rm -f "$TMP_BAM" "$TMP_BAM.bai"
+
+        # samtools stats — alignment QC metrics
         samtools stats -F 4 -@ {threads} {input.bam} \
             > {output.stats} 2>>{log.insert_size}
+
         {params.log_end}
         """
+
 # --------------------------
 # multiqc
 # --------------------------
 rule multiqc:
     input:
-        bam = expand(rules.alignment_star.output.bam, sample=SAMPLES),
+        bam  = expand(rules.alignment_star.output.bam, sample=SAMPLES),
         mark = expand(rules.markDuplicate.output.bam, sample=SAMPLES),
-        dir = FASTQ_DIR
+        dir  = FASTQ_DIR
     output:
-        html = FASTQ_DIR + "/../pipeline_v0/multiqc/multiqc_report.html",
-        data = directory(FASTQ_DIR + "/../pipeline_v0/multiqc/multiqc_data"),
+        html = METRICS_DIR + "/multiqc/multiqc_report.html",
+        data = directory(METRICS_DIR + "/multiqc/multiqc_data"),
     params:
-        bed = RSEQ_BED,
         fastq_dir = FASTQ_DIR,
+        out_dir   = METRICS_DIR + "/multiqc",
         log_start = lambda wc, input, threads: log_start("multiqc", wc, threads),
         log_end   = LOG_END
     conda:
@@ -290,14 +303,14 @@ rule multiqc:
         "benchmarks/multiqc/multiqc.tsv"
     log:
         run_info = "log/multiqc/log.txt",
-        time = "log/multiqc/time.txt"
+        time     = "log/multiqc/time.txt"
     shell:
         """
         set -euo pipefail
         {params.log_start}
         export TMPDIR={params.fastq_dir}/tmp
         multiqc --force {params.fastq_dir}/../pipeline_v0 \
-            -o {FASTQ_DIR}/../pipeline_v0/multiqc >> {log.run_info} 2>&1
+            -o {params.out_dir} >> {log.run_info} 2>&1
         {params.log_end}
         """
 
@@ -305,17 +318,17 @@ rule multiqc:
 # generate_and_run_param_notebook (PCA)
 # --------------------------
 RUN_NAME = os.path.basename(OUTPUT_REP)
+
 rule generate_and_run_param_notebook:
     input:
         runs_folder  = RUNS_DIR,
         mapping_file = GTF,
-#        htseq = expand(rules.htseq_gene.output.gene, sample=SAMPLES),
         htseq = expand(FASTQ_DIR + "/../pipeline_v0/htseq/{sample}/{sample}_gene_counts.txt", sample=SAMPLES)
     output:
-        executed_nb = FASTQ_DIR + f"/../pipeline_v0/notebooks/notebook_pca_{RUN_NAME}.ipynb",
+        executed_nb = METRICS_DIR + f"/notebooks/notebook_pca_{RUN_NAME}.ipynb",
     params:
         samples_run  = RUN_NAME,
-        excluded_run = "20231122_RUN17_NextSeq_Mid_8RNASEQ",
+        excluded_run = config.get("pca_excluded_runs", ""),
         keyword      = "MOINS",
         output_html  = f"PCA-{RUN_NAME}.html",
         blacklist    = PCA_blacklist,
@@ -326,7 +339,7 @@ rule generate_and_run_param_notebook:
         PIPELINE_DIR + "/envs/metrics_env.yml"
     log:
         run_info = f"log/notebook/log_{RUN_NAME}.txt",
-        time = f"log/notebook/time_{RUN_NAME}.txt"
+        time     = f"log/notebook/time_{RUN_NAME}.txt"
     shell:
         """
         set -euo pipefail
@@ -341,12 +354,15 @@ rule generate_and_run_param_notebook:
             --mapping_file {input.mapping_file} \
             --blacklist_file "$BL" \
             --samples_run {params.samples_run} \
-            --excluded_run {params.excluded_run} \
+            $([ -n "{params.excluded_run}" ] && echo "--excluded_run {params.excluded_run}") \
             --keyword {params.keyword} \
             --output_html {params.output_html} \
             --notebook_path {output.executed_nb} >> {log.run_info} 2>&1
         jupyter nbconvert --to notebook --execute --inplace \
-            {output.executed_nb} >> {log.run_info} 2>&1
+            --ExecutePreprocessor.startup_timeout=300 \
+            --ExecutePreprocessor.timeout=600 \
+            {output.executed_nb} >> {log.run_info} 2>&1 \
+          || echo "[WARN] PCA notebook execution failed (QC non bloquant) — voir {log.run_info}" >> {log.run_info}
         {params.log_end}
         """
 
@@ -355,36 +371,66 @@ rule generate_and_run_param_notebook:
 # --------------------------
 rule generate_metrics:
     input:
-        run_dir = os.path.dirname(FASTQ_DIR),
-        tpm = rules.matrix_tpm.output.gene_gene,
-        fraser = expand(FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/{samples_id}.fraser.tab", samples_id = ACTIVE_FRASER),
-        outrider = expand(FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/{samples_id}.outrider.tab", samples_id = ACTIVE_OUTRIDER)
+        run_dir          = os.path.dirname(FASTQ_DIR),
+        tpm              = rules.matrix_tpm.output.gene_gene,
+        outrider         = expand(FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/{samples_id}.outrider.tab",       samples_id=ACTIVE_OUTRIDER),
+        fraser           = expand(FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/{samples_id}.fraser.tab",           samples_id=ACTIVE_FRASER),
+        outrider_hyper   = expand(FASTQ_DIR + "/../pipeline_v0/outrider_hyper/filesbysample/{samples_id}.outrider.tab", samples_id=ACTIVE_OUTRIDER),
+        fraser_hyper     = expand(FASTQ_DIR + "/../pipeline_v0/fraser_hyper/filesbysample/{samples_id}.fraser.tab",     samples_id=ACTIVE_FRASER),
     output:
-        metrics = FASTQ_DIR + "/../pipeline_v0/metrics/qc_summary.tsv",
+        metrics  = METRICS_DIR + "/qc_summary.tsv",
+        warnings = METRICS_DIR + "/qc_warnings.tsv",
     params:
-        scripts     = PIPELINE_DIR,
-        di_file     = PANELAPP,
-        gateway     = config.get("prometheus_gateway", "http://localhost:9091"),
-        log_start   = lambda wc, input, threads: log_start("generate_metrics", wc, threads),
-        log_end     = LOG_END
+        scripts             = PIPELINE_DIR,
+        di_file             = PANELAPP,
+        db_path             = config.get("qc_db", ""),
+        gateway             = config.get("prometheus_gateway",          "http://localhost:9091"),
+        gateway_user        = config.get("prometheus_gateway_user",     ""),
+        gateway_password    = config.get("prometheus_gateway_password",  ""),
+        gateway_fallback    = config.get("prometheus_fallback_dir",      ""),
+        # Seuils d'alerte — modifiables dans le config
+        max_dup             = config.get("warn_max_dup",          40.0),
+        max_out_hyper       = config.get("warn_max_out_hyper",    20),
+        max_fraser_hyper    = config.get("warn_max_fraser_hyper", 20),
+        max_hba_total       = config.get("warn_max_hba_total",    5000.0),
+        log_start           = lambda wc, input, threads: log_start("generate_metrics", wc, threads),
+        log_end             = LOG_END
     conda:
         PIPELINE_DIR + "/envs/metrics_env.yml"
     log:
         run_info = "log/metrics/log.txt",
-        time = "log/metrics/time.txt"
+        time     = "log/metrics/time.txt"
     shell:
         """
         set -euo pipefail
         {params.log_start}
         python {params.scripts}/scripts/recup_metrics.py \
-            --run_path {input.run_dir} \
-            --tpm_file {input.tpm} \
-            --di {params.di_file} \
-            --output {output.metrics} >> {log.run_info} 2>&1
+            --run_path       {input.run_dir} \
+            --tpm_file       {input.tpm} \
+            --di             {params.di_file} \
+            --output         {output.metrics} \
+            --warnings_output {output.warnings} \
+            --max_dup        {params.max_dup} \
+            --max_out_hyper  {params.max_out_hyper} \
+            --max_fraser_hyper {params.max_fraser_hyper} \
+            --max_hba_total  {params.max_hba_total} >> {log.run_info} 2>&1
         python {params.scripts}/monitoring/push_metrics.py \
-            --run_path {input.run_dir} \
-            --gateway  {params.gateway} >> {log.run_info} 2>&1 || \
-            echo "[WARN] Pushgateway unavailable — metrics not pushed" >> {log.run_info}
+            --run_path  {input.run_dir} \
+            --gateway   {params.gateway} \
+            $([ -n "{params.gateway_user}"     ] && echo "--gateway-user     {params.gateway_user}")     \
+            $([ -n "{params.gateway_password}" ] && echo "--gateway-password {params.gateway_password}") \
+            $([ -n "{params.gateway_fallback}" ] && echo "--fallback-dir     {params.gateway_fallback}") \
+            >> {log.run_info} 2>&1 || \
+            echo "[WARN] Pushgateway unavailable — metrics not pushed (see fallback-dir if configured)" >> {log.run_info}
+
+        # Mettre à jour la base SQLite si qc_db est renseigné dans le config
+        if [ -n "{params.db_path}" ]; then
+            python {params.scripts}/scripts/update_db.py \
+                --qc_summary {output.metrics} \
+                --warnings   {output.warnings} \
+                --db         {params.db_path} \
+                >> {log.run_info} 2>&1 || \
+                echo "[WARN] update_db.py échoué — voir {log.run_info}" >> {log.run_info}
+        fi
         {params.log_end}
         """
-

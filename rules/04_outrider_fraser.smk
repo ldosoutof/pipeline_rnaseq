@@ -8,10 +8,19 @@ import subprocess
 # ----------------------
 # TOOL VERSIONS
 # ----------------------
+def _r_pkg_version(pkg):
+    """Extrait la version propre depuis la sortie de packageVersion() R."""
+    raw = subprocess.getoutput(f'Rscript -e "packageVersion(\'{pkg}\')"' )
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith("[1]"):
+            return line.replace("[1]", "").strip().strip('"\' ')
+    return raw.strip().split("\n")[0].strip('"\' ') if raw.strip() else "unknown"
+
 TOOL_VERSIONS = {
-    "OUTRIDER": subprocess.getoutput('Rscript -e "packageVersion(\'OUTRIDER\')"'),
-    "FRASER": subprocess.getoutput('Rscript -e "packageVersion(\'FRASER\')"'),
-    "python": subprocess.getoutput("python --version | cut -d' ' -f2"),
+    "OUTRIDER": _r_pkg_version("OUTRIDER"),
+    "FRASER":   _r_pkg_version("FRASER"),
+    "python":   subprocess.getoutput("python --version | cut -d' ' -f2"),
 }
 
 
@@ -38,13 +47,14 @@ rule outrider:
     log:
         run_info = "log/outrider/log.txt",
         time     = "log/outrider/time.txt"
-    threads: 1
+    threads: 8
     resources:
         single_job = 8
     shell:
         """
         set -euo pipefail
         {params.log_start}
+        OUTRIDER_THREADS={threads} \
         OUTRIDER_CURRENT_SAMPLES="{params.current_samples}" \
         Rscript {params.scripts}/scripts/outrider_newVersion.R \
             {input.htseq_matrice} \
@@ -57,10 +67,19 @@ rule outrider:
 # OUTRIDER annotation rule
 # --------------------------
 rule annotation_outrider:
+    """
+    Annotate OUTRIDER hits with GTF, PanelApp DI, PLI, HPO.
+    Enrichit chaque hit avec le nombre de jonctions FRASER aberrantes
+    co-localisées (colonne fraser_hits) — signal de convergence expression+épissage.
+
+    La dépendance à fraser.tab est intentionnelle mais non bloquante :
+    si fraser.tab est absent, le script produit fraser_hits=0 pour tous les hits.
+    Le chemin est passé via params (pas input) pour ne pas bloquer le DAG
+    si FRASER échoue indépendamment.
+    """
     version: TOOL_VERSIONS["OUTRIDER"]
     input:
-        out_file = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq.tab",
-        fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser.tab"
+        out_file = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq_all.tsv",
     output:
         annot = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq_annot.tsv",
         output_files_dir = directory(FASTQ_DIR + "/../pipeline_v0/outrider/filesbysample/"),
@@ -68,12 +87,15 @@ rule annotation_outrider:
     conda:
         PIPELINE_DIR + "/envs/outrider_env.yml"
     params:
-        gtf = GTF,
-        panel = PANELAPP,
-        pli = PLI,
-        hpo = HPO,
-        pheno = PHENO,
+        gtf     = GTF,
+        panel   = PANELAPP,
+        pli     = PLI,
+        hpo     = HPO,
+        pheno   = PHENO,
         scripts = PIPELINE_DIR,
+        # Chemin vers fraser.tab passé en params (non bloquant dans le DAG).
+        # Le script charge ce fichier seulement s'il existe (os.path.exists).
+        fraser  = FASTQ_DIR + "/../pipeline_v0/fraser/fraser.tab",
         log_start = lambda wc, input, threads: log_start("annotation_outrider", wc, threads),
         log_end   = LOG_END
     log:
@@ -89,7 +111,7 @@ rule annotation_outrider:
         python {params.scripts}/scripts/annotation_outrider_hits_bis2.py \
             -i {input.out_file} -g {params.gtf} -d {params.panel} \
             -p {params.pli} -o {params.pheno} -m {params.hpo} \
-            -f {output.annot} --fraser {input.fraser} >> {log.run_info} 2>&1
+            -f {output.annot} --fraser {params.fraser} >> {log.run_info} 2>&1
         python {params.scripts}/scripts/outrider_1file.py \
             -i {output.annot} -b {output.output_files_dir}/ >> {log.run_info} 2>&1
         for f in {output.files}; do [ -f "$f" ] || touch "$f"; done
@@ -106,9 +128,10 @@ rule fraser_config:
     conda:
         PIPELINE_DIR + "/envs/fraser_env.yml"
     params:
-        blacklist = fraser_blacklist,
-        fraser = fraser_count,
-        scripts = PIPELINE_DIR,
+        blacklist      = fraser_blacklist,
+        fraser         = fraser_count,
+        scripts        = PIPELINE_DIR,
+        excluded_runs  = config.get("fraser_excluded_runs", ""),
         log_start = lambda wc, input, threads: log_start("fraser_config", wc, threads),
         log_end   = LOG_END
     benchmark:
@@ -124,8 +147,13 @@ rule fraser_config:
         set -euo pipefail
         {params.log_start}
         python {params.scripts}/scripts/fraser_config_create.py \
-            {output.fraser} MOINS {input.dir}/../.. \
-            {params.fraser} {params.blacklist} >> {log.run_info} 2>&1
+            --output        {output.fraser}          \
+            --pattern       MOINS                    \
+            --root_dir      {input.dir}/../..        \
+            --fraser_dir    {params.fraser}          \
+            --blacklist     {params.blacklist}       \
+            --excluded_runs "{params.excluded_runs}" \
+            >> {log.run_info} 2>&1
         {params.log_end}
         """
 
@@ -141,8 +169,9 @@ rule fraser:
     conda:
         PIPELINE_DIR + "/envs/fraser_env.yml"
     params:
-        dir = fraser_count,
-        scripts = PIPELINE_DIR,
+        dir         = fraser_count,
+        scripts     = PIPELINE_DIR,
+        yaml_config = config.get("fraser_yaml", ""),
         log_start = lambda wc, input, threads: log_start("fraser", wc, threads),
         log_end   = LOG_END
     benchmark:
@@ -150,7 +179,7 @@ rule fraser:
     log:
         run_info = "log/fraser/log_fraser.txt",
         time = "log/fraser/time_fraser.txt"
-    threads: 1
+    threads: 10
     resources:
         single_job = 8
     shell:
@@ -158,8 +187,10 @@ rule fraser:
         set -euo pipefail
         {params.log_start}
         python {params.scripts}/scripts/backup_fraser_counts.py {params.dir} >> {log.run_info} 2>&1
+        FRASER_THREADS={threads} \
         Rscript {params.scripts}/scripts/fraser.R \
-            {params.dir} {input.config} {output.fraser} >> {log.run_info} 2>&1
+            {params.dir} {input.config} {output.fraser} \
+            {params.yaml_config} >> {log.run_info} 2>&1
         {params.log_end}
         """
 
@@ -167,10 +198,18 @@ rule fraser:
 # FRASER annotation rule
 # --------------------------
 rule annotation_fraser:
+    """
+    Annotate FRASER hits with GTF, PanelApp DI, PLI, HPO.
+    Enrichit chaque hit avec un flag outrider_hit indiquant si le même gène
+    est aberrant en expression chez le même patient — signal de convergence.
+
+    La dépendance à outrider_htseq.tab est déclarée en input (couplage DAG) :
+    Snakemake garantit qu'OUTRIDER est produit avant cette annotation.
+    """
     version: TOOL_VERSIONS["FRASER"]
     input:
         fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser.tab",
-        outrider = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq.tab"
+        outrider = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq.tab",
     output:
         annot_fraser = FASTQ_DIR + "/../pipeline_v0/fraser/fraser_annot.tsv",
         files_dir = directory(FASTQ_DIR + "/../pipeline_v0/fraser/filesbysample/"),
@@ -179,12 +218,14 @@ rule annotation_fraser:
         PIPELINE_DIR + "/envs/fraser_env.yml"
     params:
         blacklist = fraser_blacklist,
-        gtf = GTF,
-        panel = PANELAPP,
-        pli = PLI,
-        hpo = HPO,
-        pheno = PHENO,
+        gtf     = GTF,
+        panel   = PANELAPP,
+        pli     = PLI,
+        hpo     = HPO,
+        pheno   = PHENO,
         scripts = PIPELINE_DIR,
+        magnis  = config.get("magnis_file", ""),
+        # Chemin vers outrider_htseq.tab déclaré en input (dépendance DAG).
         log_start = lambda wc, input, threads: log_start("annotation_fraser", wc, threads),
         log_end   = LOG_END
     log:
@@ -200,7 +241,8 @@ rule annotation_fraser:
         python {params.scripts}/scripts/annotation_fraser_test4.py \
             -f {input.fraser} -g {params.gtf} -d {params.panel} \
             -p {params.pli} -m {params.hpo} -o {params.pheno} \
-            --outrider {input.outrider} --output {output.annot_fraser} >> {log.run_info} 2>&1
+            --outrider {input.outrider} --output {output.annot_fraser} \
+            --magnis "{params.magnis}" >> {log.run_info} 2>&1
         python {params.scripts}/scripts/fraser_1file.py \
             -i {output.annot_fraser} -b {output.files_dir}/ >> {log.run_info} 2>&1
         for f in {output.files}; do [ -f "$f" ] || touch "$f"; done
@@ -213,7 +255,7 @@ rule annotation_fraser:
 rule rnaseq_per_sample:
     input:
         fraser   = FASTQ_DIR + "/../pipeline_v0/fraser/fraser.tab",
-        outrider = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq.tab"
+        outrider = FASTQ_DIR + "/../pipeline_v0/outrider/outrider_htseq_all.tsv"
     output:
         files_dir = directory(FASTQ_DIR + "/../pipeline_v0/per_sample/"),
         zip_file  = touch(FASTQ_DIR + "/../pipeline_v0/per_sample/results.zip")

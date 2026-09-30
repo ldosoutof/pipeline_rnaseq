@@ -106,9 +106,12 @@ def gtf_file(tmp_path):
 
 @pytest.fixture
 def blacklist_file(tmp_path):
-    """Blacklist with one sample."""
-    p = tmp_path / "blacklist.txt"
-    p.write_text("25D1002 excluded_reason\n")
+    """
+    Blacklist unifiée au format TSV (sample_id, tool, reason).
+    Exclut 25D1002 de toutes les analyses.
+    """
+    p = tmp_path / "blacklist.tsv"
+    p.write_text("sample_id\ttool\treason\n25D1002\tall\texcluded_reason\n")
     return p
 
 

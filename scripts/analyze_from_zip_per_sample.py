@@ -299,7 +299,8 @@ class ZipAnalyzer:
         try:
             with open(file_path) as f:
                 header = f.readline().strip().lower()
-                return all(c in header for c in ['sampleid', 'hgncsymbol', 'pvalue', 'deltapsi'])
+                return all(c in header for c in ['sampleid', 'pvalue', 'deltapsi']) and \
+               any(c in header for c in ['hgncsymbol', 'gene_name', 'hgncSymbol'.lower()])
         except Exception as e:
             logger.debug(f"Erreur vérification FRASER {file_path}: {e}")
             return False
