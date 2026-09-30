@@ -115,6 +115,15 @@ def find_ready_runs(watch_path: Path) -> list:
     return ready
 
 
+def launch_dir(run_dir: Path) -> Path:
+    """
+    Dossier de travail Snakemake du run : <PIPELINE_DIR>/<run>/. C'est là que
+    preprocess.py écrit launch_folder/ (config.yml + launch.sh), et c'est le
+    répertoire courant du pipeline (.snakemake/, log/ propres au run).
+    """
+    return Path(PIPELINE_DIR) / run_dir.name
+
+
 def run_preprocess(run_dir: Path) -> bool:
     """
     Lance preprocess.py pour générer config.yml + launch.sh.
@@ -140,7 +149,7 @@ def run_preprocess(run_dir: Path) -> bool:
             log.error(f"preprocess.py a échoué (code {ret.returncode}). Voir {log_out}")
             return False
         # Vérifier que le config généré ne contient plus de placeholders /path/to/
-        config = run_dir / "launch_folder" / "config.yml"
+        config = launch_dir(run_dir) / "launch_folder" / "config.yml"
         if config.is_file():
             txt = config.read_text()
             if "/path/to/" in txt:
@@ -164,7 +173,7 @@ def run_pipeline(run_dir: Path) -> None:
     marqué .launched AVANT le lancement pour éviter tout double départ même si
     le pipeline est long.
     """
-    launch = run_dir / "launch_folder" / "launch.sh"
+    launch = launch_dir(run_dir) / "launch_folder" / "launch.sh"
     if not launch.is_file():
         log.error(f"launch.sh introuvable ({launch}) — run ignoré.")
         return
@@ -180,7 +189,7 @@ def run_pipeline(run_dir: Path) -> None:
             ret = subprocess.run(
                 ["bash", str(launch)],
                 stdout=fout, stderr=subprocess.STDOUT,
-                cwd=PIPELINE_DIR,
+                cwd=str(launch_dir(run_dir)),   # .snakemake/ et log/ propres au run
             )
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if ret.returncode == 0:
