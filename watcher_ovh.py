@@ -6,7 +6,9 @@ par le watcher sitatst) et lance le pipeline RNA-seq automatiquement.
 Flux global :
   [sitatst] watcher_nextseq.py : concatène + rsync FASTQ -> OVH, puis dépose
             un fichier sentinelle TRANSFER_COMPLETE dans le dossier du run.
-  [OVH]     CE watcher : détecte TRANSFER_COMPLETE -> preprocess.py -> launch.sh.
+  [OVH]     CE watcher : détecte TRANSFER_COMPLETE -> preprocess.py -> launch.sh,
+            puis, si le pipeline a réussi, renvoie pipeline_v0/ vers sitatst
+            (scripts/send_results_to_sitatst.py) et y dépose RESULTS_COMPLETE.
 
 Points clés :
   - Détection par SENTINELLE (et non présence de fichiers) : garantit que le
@@ -16,6 +18,10 @@ Points clés :
     partagés ; deux runs concurrents les corrompent). Un verrou global empêche
     tout lancement parallèle.
   - Idempotence : un run déjà traité (marqueur .launched) n'est pas relancé.
+  - Retour des résultats : marqueurs .pipeline_ok / .pipeline_failed (issue du
+    pipeline) et .results_synced (transfert vérifié). Un run réussi mais non
+    transféré (sitatst injoignable…) est retenté au plus toutes les
+    RESULTS_RETRY_DELAY secondes.
 """
 
 import os
@@ -47,6 +53,13 @@ SENTINEL_NAME   = "TRANSFER_COMPLETE"
 LAUNCHED_MARKER = ".launched"
 
 POLL_INTERVAL   = 300           # secondes entre deux scans (5 min)
+
+# Retour des résultats vers sitatst (paramètres : section sync_sitatst de SITE_PATHS)
+SEND_RESULTS        = f"{PIPELINE_DIR}/scripts/send_results_to_sitatst.py"
+PIPELINE_OK         = ".pipeline_ok"       # pipeline terminé avec le code 0
+PIPELINE_FAILED     = ".pipeline_failed"   # pipeline en échec (code dans le fichier)
+RESULTS_MARKER      = ".results_synced"    # écrit par send_results_to_sitatst.py
+RESULTS_RETRY_DELAY = 1800                 # s entre deux tentatives de retour (30 min)
 
 LOG_FILE        = "/home/ldosoutoferreira/logs/watcher_ovh.log"
 # ──────────────────────────────────────────────
@@ -169,13 +182,61 @@ def run_pipeline(run_dir: Path) -> None:
                 stdout=fout, stderr=subprocess.STDOUT,
                 cwd=PIPELINE_DIR,
             )
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if ret.returncode == 0:
             log.info(f"Pipeline terminé avec succès pour {run_dir.name}.")
+            (run_dir / PIPELINE_OK).write_text(stamp + "\n")
+            send_results(run_dir)
         else:
             log.error(f"Pipeline a échoué (code {ret.returncode}) pour "
-                      f"{run_dir.name}. Voir {log_out}")
+                      f"{run_dir.name}. Voir {log_out} — résultats NON renvoyés vers sitatst.")
+            (run_dir / PIPELINE_FAILED).write_text(f"{stamp} code={ret.returncode}\n")
     except Exception as e:
         log.error(f"Erreur lancement pipeline : {e}")
+
+
+def send_results(run_dir: Path) -> bool:
+    """
+    Renvoie pipeline_v0/ vers sitatst via scripts/send_results_to_sitatst.py
+    (transfert, vérification, sentinelle RESULTS_COMPLETE, marqueur local).
+    Codes du script : 0 = fait (ou déjà fait), 2 = désactivé, autre = échec.
+    """
+    log_out = run_dir / "send_results.log"
+    cmd = [sys.executable, SEND_RESULTS, str(run_dir), "--site-paths", SITE_PATHS]
+    log.info(f"Retour des résultats vers sitatst : {run_dir.name} (log → {log_out})")
+    try:
+        with open(log_out, "a") as fout:
+            fout.write(f"===== {datetime.now():%Y-%m-%d %H:%M:%S}\n"); fout.flush()
+            ret = subprocess.run(cmd, stdout=fout, stderr=subprocess.STDOUT, timeout=86400)
+    except Exception as e:
+        log.error(f"Retour des résultats impossible pour {run_dir.name} : {e}")
+        return False
+    if ret.returncode == 0:
+        log.info(f"Résultats de {run_dir.name} transférés et vérifiés (RESULTS_COMPLETE déposé).")
+        return True
+    if ret.returncode == 2:
+        log.info("Retour des résultats désactivé (sync_sitatst.enabled) — rien envoyé.")
+        return False
+    log.error(f"Retour des résultats en échec pour {run_dir.name} (code {ret.returncode}). "
+              f"Nouvelle tentative dans {RESULTS_RETRY_DELAY // 60} min. Voir {log_out}")
+    return False
+
+
+def find_unsent_runs(watch_path: Path) -> list:
+    """Runs réussis (.pipeline_ok) pas encore transférés (.results_synced),
+    dont la dernière tentative date de plus de RESULTS_RETRY_DELAY."""
+    now = time.time()
+    pending = []
+    for run_dir in sorted(watch_path.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        if not (run_dir / PIPELINE_OK).exists() or (run_dir / RESULTS_MARKER).exists():
+            continue
+        last = run_dir / "send_results.log"
+        if last.exists() and now - last.stat().st_mtime < RESULTS_RETRY_DELAY:
+            continue
+        pending.append(run_dir)
+    return pending
 
 
 def process_ready_run(run_dir: Path) -> None:
@@ -213,6 +274,11 @@ def main():
                     # laisse la boucle re-vérifier — garantit la sérialisation.
                     run_dir = ready[0]
                     process_ready_run(run_dir)
+                else:
+                    # Rien à lancer : retenter les retours de résultats en attente
+                    unsent = find_unsent_runs(watch_path)
+                    if unsent:
+                        send_results(unsent[0])
         except Exception as e:
             log.error(f"Erreur dans la boucle principale : {e}", exc_info=True)
 

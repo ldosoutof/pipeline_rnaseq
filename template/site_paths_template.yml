@@ -72,3 +72,16 @@ warn_max_dup:          40.0
 warn_max_out_hyper:    20
 warn_max_fraser_hyper: 20
 warn_max_hba_total:    5000.0
+
+# --- Retour des résultats vers sitatst ----------------------------------------
+# Utilisé par le watcher OVH (scripts/send_results_to_sitatst.py) après un run
+# réussi : pipeline_v0/ -> <dest_path>/<run>/pipeline_v0/, vérification, puis
+# sentinelle <dest_path>/<run>/RESULTS_COMPLETE. Le pipeline lui-même ne
+# transfère rien.
+sync_sitatst:
+  enabled:    false
+  host:       ""
+  user:       ""
+  dest_path:  ""
+  ssh_key:    ""   # clé SSH dédiée (recommandé)
+  pass_file:  ""        # alternative : fichier chmod 600 contenant le mot de passe

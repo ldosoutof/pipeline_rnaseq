@@ -82,4 +82,15 @@ warn_max_out_hyper:    500
 warn_max_fraser_hyper: 1000
 warn_max_hba_total:    5
 
-
+# --- Retour des résultats vers sitatst ----------------------------------------
+# Utilisé par le watcher OVH (scripts/send_results_to_sitatst.py) après un run
+# réussi : pipeline_v0/ -> <dest_path>/<run>/pipeline_v0/, vérification, puis
+# sentinelle <dest_path>/<run>/RESULTS_COMPLETE. Le pipeline lui-même ne
+# transfère rien.
+sync_sitatst:
+  enabled:    true
+  host:       "172.27.253.113"
+  user:       "ldosouto"
+  dest_path:  "/data2/Exome_analysis_BC/Server_S_exome/MAGNIS/Runs_nextseq"
+  ssh_key:    "~/.ssh/id_ovh_to_sitatst"   # clé SSH dédiée (recommandé)
+  pass_file:  ""        # alternative : fichier chmod 600 contenant le mot de passe

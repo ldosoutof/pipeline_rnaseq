@@ -555,109 +555,8 @@ def send_email(subject, body):
     except Exception as e:
         print(f'[WARN] Envoi email impossible : {e}')
 
-def rsync_results_to_sitatst():
-    """
-    Transfère les résultats complets (pipeline_v0/) du run courant vers le
-    serveur sitatst. L'ingestion des métriques dans la base QC du dashboard est
-    faite ensuite par le watcher de sitatst (seul chemin d'ingestion).
-
-    Déclenché depuis onsuccess (pipeline réussi), BLOQUANT : la fonction ne
-    rend la main qu'une fois le transfert + la vérification terminés.
-
-    Piloté par la section `sync_sitatst` du config.yml. Si `enabled` est faux
-    ou absent, la fonction ne fait rien (retour silencieux) — le pipeline reste
-    fonctionnel sans synchronisation.
-
-    Leçon du bug de troncature FASTQ (course concat/rsync) : on ne se fie pas à
-    l'existence d'un fichier ; rsync est bloquant (subprocess.run) et on vérifie
-    l'intégrité gzip côté distant après transfert.
-    """
-    sync = config.get('sync_sitatst', {}) or {}
-    if not sync.get('enabled', False):
-        print('[INFO] sync_sitatst désactivé (config) — pas de transfert.')
-        return
-
-    host      = sync.get('host', '')
-    user      = sync.get('user', '')
-    dest_root = sync.get('dest_path', '').rstrip('/')
-    pass_file = sync.get('pass_file', '')      # fichier chmod 600 contenant le mot de passe SSH
-    ssh_key   = sync.get('ssh_key', '')        # chemin d'une clé SSH privée dédiée (recommandé)
-
-    if not (host and user and dest_root):
-        print('[WARN] sync_sitatst incomplet (host/user/dest_path manquant) — transfert annulé.')
-        return
-
-    # Source : le dossier pipeline_v0 du run courant
-    src = os.path.join(OUTPUT_REP, 'pipeline_v0') + '/'
-    if not os.path.isdir(src):
-        print(f'[WARN] Source introuvable : {src} — transfert annulé.')
-        return
-
-    dest = f'{user}@{host}:{dest_root}/{_CURRENT_RUN_TAG}/pipeline_v0/'
-
-    # --- Construction de la commande rsync ---
-    # -a archive, -z compression, --checksum : compare le contenu (pas date+taille)
-    #    -> important pour ne pas laisser un fichier tronqué existant passer pour "à jour".
-    #    (cf. man rsync : -c/--checksum "skip based on checksum, not mod-time & size")
-    # -a archive, -z compression, --checksum : compare le contenu (pas date+taille)
-    #    -> important pour ne pas laisser un fichier tronqué existant passer pour "à jour".
-    #    (cf. man rsync : -c/--checksum "skip based on checksum, not mod-time & size")
-    # Clé SSH dédiée si fournie (ssh_key), sinon clé par défaut / sshpass.
-    ssh_opt = 'ssh -o StrictHostKeyChecking=no'
-    if ssh_key:
-        ssh_opt += f' -i {ssh_key}'
-    base_rsync = ['rsync', '-az', '--checksum', '--partial', '-e', ssh_opt, src, dest]
-
-    # sshpass si un fichier mot de passe est fourni ; sinon on suppose une clé SSH
-    if pass_file and os.path.isfile(pass_file):
-        try:
-            password = Path(pass_file).read_text().strip()
-        except Exception as e:
-            print(f'[WARN] Lecture pass_file impossible : {e} — transfert annulé.')
-            return
-        # sshpass -e : le mot de passe est lu dans la variable SSHPASS (cmd_env),
-        # il n'apparaît pas dans la liste des processus (ps) comme avec -p.
-        cmd = ['sshpass', '-e'] + base_rsync
-        cmd_env = {**os.environ, 'SSHPASS': password}
-    else:
-        cmd = base_rsync
-        cmd_env = dict(os.environ)
-
-    print(f'[INFO] rsync résultats → sitatst : {dest}')
-    try:
-        # BLOQUANT : on attend la fin réelle du transfert
-        ret = subprocess.run(cmd, env=cmd_env, timeout=86400)
-    except FileNotFoundError:
-        print('[WARN] sshpass/rsync introuvable — transfert annulé.')
-        return
-    except subprocess.TimeoutExpired:
-        print('[WARN] rsync : timeout (24 h) — transfert incomplet.')
-        return
-    if ret.returncode != 0:
-        print(f'[WARN] rsync a échoué (code {ret.returncode}) — transfert incomplet.')
-        return
-    print('[INFO] rsync terminé avec succès.')
-
-    # --- Contrôle d'intégrité côté distant (défense en profondeur) ---
-    # On teste les .gz transférés et on signale toute corruption.
-    remote_check = (
-        f"bad=0; for f in {dest_root}/{_CURRENT_RUN_TAG}/pipeline_v0/*/*.gz; do "
-        f"[ -e \"$f\" ] || continue; gzip -t \"$f\" 2>/dev/null || bad=$((bad+1)); done; "
-        f"echo INTEGRITY_BAD=$bad"
-    )
-    ssh_base = ['ssh', '-o', 'StrictHostKeyChecking=no']
-    if ssh_key:
-        ssh_base += ['-i', ssh_key]
-    ssh_base += [f'{user}@{host}', remote_check]
-    ssh_cmd  = (['sshpass', '-e'] + ssh_base) if (pass_file and os.path.isfile(pass_file)) else ssh_base
-    try:
-        chk = subprocess.run(ssh_cmd, env=cmd_env, capture_output=True, text=True, timeout=3600)
-        if 'INTEGRITY_BAD=0' not in (chk.stdout or ''):
-            print(f'[WARN] Intégrité distante KO ({chk.stdout.strip()}) — fichiers à retransférer.')
-            return
-        print('[INFO] Intégrité distante OK.')
-    except Exception as e:
-        print(f'[WARN] Vérification intégrité distante impossible : {e} — on continue prudemment.')
+# Le retour des résultats vers sitatst est fait par le watcher OVH
+# (scripts/send_results_to_sitatst.py), pas par le pipeline.
 
 
 onsuccess:
@@ -669,11 +568,6 @@ onsuccess:
             f'Run : {_CURRENT_RUN_TAG}'
         )
     )
-    # Transfert bloquant des résultats vers sitatst + mise à jour interface metrics
-    try:
-        rsync_results_to_sitatst()
-    except Exception as e:
-        print(f'[WARN] Synchronisation sitatst : erreur non bloquante : {e}')
 
 onerror:
     now      = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
