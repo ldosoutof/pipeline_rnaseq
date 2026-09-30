@@ -102,7 +102,7 @@ Les deux fichiers sont écrits dans `<workDir>/launch_folder/`.
 ```bash
 python scripts/preprocess.py \
     --path    /chemin/vers/pipeline/ \
-    --workDir /chemin/vers/répertoire de travail du run/      \
+    --workDir /chemin/vers/dossier_de_travail_du_run/ \
     --dataDir /chemin/vers/run/         # doit contenir un sous-dossier fastq/
 
 # site_paths hors de template/ :
@@ -140,9 +140,6 @@ python scripts/preprocess.py -p … -w … -d … \
   séparateur produiraient le même ID court et seraient confondus. La longueur
   n'est pas imposée par le pipeline (la convention CHU `26D`+4 chiffres = 7
   caractères n'est qu'un usage, pas une contrainte).
-- Si `site_paths.yml` est absent, le script **n'échoue pas** mais avertit et
-  génère un config avec les chemins génériques `/path/to/…` du template ; il
-  liste alors les clés restées génériques à compléter avant lancement.
 
 ### Enchaînement
 
