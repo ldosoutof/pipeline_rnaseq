@@ -61,12 +61,6 @@ gnomad_chrx: ""
 docker_mounts:  ""
 docker_workdir: ""
 
-# --- Prometheus --------------------------------------------------------------
-prometheus_gateway:          ""
-prometheus_gateway_user:     ""
-prometheus_gateway_password: ""
-prometheus_fallback_dir:     ""
-
 # --- Notifications mail -------------------------------------------------------
 smtp_host: ""
 smtp_port: 25

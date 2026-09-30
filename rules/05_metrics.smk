@@ -383,11 +383,6 @@ rule generate_metrics:
     params:
         scripts             = PIPELINE_DIR,
         di_file             = PANELAPP,
-        db_path             = config.get("qc_db", ""),
-        gateway             = config.get("prometheus_gateway",          "http://localhost:9091"),
-        gateway_user        = config.get("prometheus_gateway_user",     ""),
-        gateway_password    = config.get("prometheus_gateway_password",  ""),
-        gateway_fallback    = config.get("prometheus_fallback_dir",      ""),
         # Seuils d'alerte — modifiables dans le config
         max_dup             = config.get("warn_max_dup",          40.0),
         max_out_hyper       = config.get("warn_max_out_hyper",    20),
@@ -414,23 +409,7 @@ rule generate_metrics:
             --max_out_hyper  {params.max_out_hyper} \
             --max_fraser_hyper {params.max_fraser_hyper} \
             --max_hba_total  {params.max_hba_total} >> {log.run_info} 2>&1
-        python {params.scripts}/monitoring/push_metrics.py \
-            --run_path  {input.run_dir} \
-            --gateway   {params.gateway} \
-            $([ -n "{params.gateway_user}"     ] && echo "--gateway-user     {params.gateway_user}")     \
-            $([ -n "{params.gateway_password}" ] && echo "--gateway-password {params.gateway_password}") \
-            $([ -n "{params.gateway_fallback}" ] && echo "--fallback-dir     {params.gateway_fallback}") \
-            >> {log.run_info} 2>&1 || \
-            echo "[WARN] Pushgateway unavailable — metrics not pushed (see fallback-dir if configured)" >> {log.run_info}
-
-        # Mettre à jour la base SQLite si qc_db est renseigné dans le config
-        if [ -n "{params.db_path}" ]; then
-            python {params.scripts}/scripts/update_db.py \
-                --qc_summary {output.metrics} \
-                --warnings   {output.warnings} \
-                --db         {params.db_path} \
-                >> {log.run_info} 2>&1 || \
-                echo "[WARN] update_db.py échoué — voir {log.run_info}" >> {log.run_info}
-        fi
+        # L'ingestion des métriques dans la base QC est faite par le watcher de sitatst
+        # au retour des résultats (seul chemin d'ingestion) : rien à pousser ici.
         {params.log_end}
         """

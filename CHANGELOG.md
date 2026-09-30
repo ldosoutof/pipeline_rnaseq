@@ -6,6 +6,13 @@ impact sur les résultats.
 
 ## [Non publié]
 
+### Modifié
+- **Un seul chemin d'ingestion des métriques** : le watcher de sitatst, au retour des résultats. Le pipeline ne pousse plus vers le Pushgateway (`push_metrics.py`) et n'écrit plus dans aucune base QC : ni localement (`qc_db`, règle `generate_metrics`), ni à distance (`update_db.py` lancé après la synchronisation). Le transfert des résultats vers sitatst et le contrôle d'intégrité sont conservés. Impact sur les résultats : aucun (fichiers produits identiques).
+- Configuration : clés `qc_db`, `prometheus_*`, `sync_sitatst.update_db`, `remote_db` et `remote_update_db_script` retirées de `config_template.yml`, `site_paths.yml` et `site_paths_template.yml`.
+
+### Retiré
+- `monitoring/` (Pushgateway, Prometheus, Grafana), `envs/dashboard_env.yml`, `scripts/update_db.py`, `scripts/backfill_db.py` : ils reçoivent ou affichent les métriques et rejoignent le dépôt du dashboard.
+
 ## [v2.0.0] – 2026-09-30
 
 État de la production au 30/09/2026, versionné a posteriori. Entre juillet et septembre 2026, le code de

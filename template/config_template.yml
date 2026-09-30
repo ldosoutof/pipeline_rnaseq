@@ -111,28 +111,10 @@ gnomad_chrx: "/path/to/references/annotation/gnomad_chrX.vcf.bgz"
 x_bias_control_vaf:   ""
 x_bias_control_label: ""
 
-# --- Base de données QC SQLite -----------------------------------------------
-# Chemin vers la base SQLite consolidée (tous runs).
-# Laissez vide pour désactiver la mise à jour automatique.
-# Le dashboard app_dashboard.py lit ce fichier.
-qc_db: ""
-
 # --- Snakemake binary (pour save_rulegraph) ----------------------------------
 # Laisser "snakemake" si snakemake est dans le PATH de l'env conda utilisé.
 # Sinon spécifier le chemin complet ex: "/appli/miniconda3/envs/snakemake/bin/snakemake"
 snakemake_bin: "snakemake"
-
-# --- Prometheus (optionnel) --------------------------------------------------
-# URL complète du Pushgateway sur le serveur de résultats
-prometheus_gateway: "http://grafana-server:9092"
-
-# Authentification HTTP Basic (laisser vides si pas d'auth)
-prometheus_gateway_user:     ""
-prometheus_gateway_password: ""   # utiliser sudo_password_file pour les secrets
-
-# Dossier local de fallback si le gateway est indisponible
-# Les métriques y sont stockées et peuvent être renvoyées avec --replay-fallback
-prometheus_fallback_dir: ""       # ex: "/path/to/run/pipeline_v0/metrics/fallback"
 
 # --- Notifications mail -------------------------------------------------------
 smtp_host: "localhost"
@@ -149,7 +131,7 @@ warn_max_hba_total:    5000.0  # TPM cumulé HBA1+HBA2+HBB (contamination éryth
 
 # --- Synchronisation des résultats vers sitatst (interface metrics) -----------
 # Déclenché en fin de pipeline (onsuccess), BLOQUANT : transfère pipeline_v0/
-# vers sitatst puis met à jour la base QC lue par l'interface (app_dashboard.py).
+# vers sitatst ; le watcher de sitatst ingère ensuite les métriques dans la base QC.
 sync_sitatst:
   enabled:    false                       # true pour activer le transfert
   host:       "172.27.253.113"            # serveur sitatst (interface metrics)
@@ -157,9 +139,6 @@ sync_sitatst:
   dest_path:  "/data2/Exome_analysis_BC/Server_S_exome/MAGNIS/Runs_nextseq"  # convention existante : <run>/pipeline_v0/ ajouté automatiquement
   ssh_key:    "~/.ssh/id_ovh_to_sitatst"  # clé SSH dédiée OVH->sitatst (recommandé)
   pass_file:  ""                          # alternative : fichier chmod 600 avec mot de passe (si pas de clé)
-  update_db:  true                        # déclencher update_db.py sur sitatst après transfert
-  remote_db:  "/home/ldosouto/rnaseq_qc.db"          # base lue par l'interface (confirmé)
-  remote_update_db_script: "/data2/Exome_analysis_BC/Server_S_exome/Projets_autre/test_laura/pipeline_clean/pipeline_clean/scripts/update_db.py"   # confirmé sur sitatst
 
 # --- CIBERSORTx : déconvolution cellulaire (LM22) -----------------------------
 # Estime les proportions de 22 types cellulaires immunitaires par échantillon.

@@ -121,7 +121,7 @@ def main():
 
     # Known intentional non-rule scripts (CLI tools, ops scripts)
     cli_tools = {
-        "backfill_db.py", "backfill_qc_summary.py", "preprocess.py",
+        "backfill_qc_summary.py", "preprocess.py",
         "annotation_coverage.py",   # added by F24, called manually
     }
     # Called by experimental module (not included by default)

@@ -522,8 +522,8 @@ def send_email(subject, body):
 def rsync_results_to_sitatst():
     """
     Transfère les résultats complets (pipeline_v0/) du run courant vers le
-    serveur sitatst, PUIS déclenche la mise à jour de la base QC (update_db.py)
-    qui alimente l'interface metrics (app_dashboard.py) hébergée sur sitatst.
+    serveur sitatst. L'ingestion des métriques dans la base QC du dashboard est
+    faite ensuite par le watcher de sitatst (seul chemin d'ingestion).
 
     Déclenché depuis onsuccess (pipeline réussi), BLOQUANT : la fonction ne
     rend la main qu'une fois le transfert + la vérification terminés.
@@ -534,7 +534,7 @@ def rsync_results_to_sitatst():
 
     Leçon du bug de troncature FASTQ (course concat/rsync) : on ne se fie pas à
     l'existence d'un fichier ; rsync est bloquant (subprocess.run) et on vérifie
-    l'intégrité gzip côté distant après transfert avant de mettre à jour la DB.
+    l'intégrité gzip côté distant après transfert.
     """
     sync = config.get('sync_sitatst', {}) or {}
     if not sync.get('enabled', False):
@@ -546,8 +546,6 @@ def rsync_results_to_sitatst():
     dest_root = sync.get('dest_path', '').rstrip('/')
     pass_file = sync.get('pass_file', '')      # fichier chmod 600 contenant le mot de passe SSH
     ssh_key   = sync.get('ssh_key', '')        # chemin d'une clé SSH privée dédiée (recommandé)
-    update_db = sync.get('update_db', True)    # déclencher update_db.py sur sitatst ?
-    remote_db = sync.get('remote_db', '')      # chemin de rnaseq_qc.db SUR sitatst
 
     if not (host and user and dest_root):
         print('[WARN] sync_sitatst incomplet (host/user/dest_path manquant) — transfert annulé.')
@@ -598,12 +596,12 @@ def rsync_results_to_sitatst():
         print('[WARN] rsync : timeout (24 h) — transfert incomplet.')
         return
     if ret.returncode != 0:
-        print(f'[WARN] rsync a échoué (code {ret.returncode}) — DB non mise à jour.')
+        print(f'[WARN] rsync a échoué (code {ret.returncode}) — transfert incomplet.')
         return
     print('[INFO] rsync terminé avec succès.')
 
     # --- Contrôle d'intégrité côté distant (défense en profondeur) ---
-    # On teste les .gz transférés ; si un est corrompu, on n'actualise pas la DB.
+    # On teste les .gz transférés et on signale toute corruption.
     remote_check = (
         f"bad=0; for f in {dest_root}/{_CURRENT_RUN_TAG}/pipeline_v0/*/*.gz; do "
         f"[ -e \"$f\" ] || continue; gzip -t \"$f\" 2>/dev/null || bad=$((bad+1)); done; "
@@ -617,32 +615,11 @@ def rsync_results_to_sitatst():
     try:
         chk = subprocess.run(ssh_cmd, env=cmd_env, capture_output=True, text=True, timeout=3600)
         if 'INTEGRITY_BAD=0' not in (chk.stdout or ''):
-            print(f'[WARN] Intégrité distante KO ({chk.stdout.strip()}) — DB non mise à jour.')
+            print(f'[WARN] Intégrité distante KO ({chk.stdout.strip()}) — fichiers à retransférer.')
             return
         print('[INFO] Intégrité distante OK.')
     except Exception as e:
         print(f'[WARN] Vérification intégrité distante impossible : {e} — on continue prudemment.')
-
-    # --- Mise à jour de la base QC sur sitatst (alimente l'interface metrics) ---
-    if update_db and remote_db:
-        qc_summary_remote = f'{dest_root}/{_CURRENT_RUN_TAG}/pipeline_v0/metrics/qc_summary.tsv'
-        update_cmd = (
-            f"python {sync.get('remote_update_db_script', 'update_db.py')} "
-            f"--qc_summary {qc_summary_remote} --db {remote_db}"
-        )
-        ssh_upd = ['ssh', '-o', 'StrictHostKeyChecking=no']
-        if ssh_key:
-            ssh_upd += ['-i', ssh_key]
-        ssh_upd += [f'{user}@{host}', update_cmd]
-        ssh_upd = (['sshpass', '-p', password] + ssh_upd) if (pass_file and os.path.isfile(pass_file)) else ssh_upd
-        try:
-            upd = subprocess.run(ssh_upd, env=cmd_env, timeout=3600)
-            if upd.returncode == 0:
-                print('[INFO] update_db.py exécuté sur sitatst — interface metrics à jour.')
-            else:
-                print(f'[WARN] update_db.py a échoué sur sitatst (code {upd.returncode}).')
-        except Exception as e:
-            print(f'[WARN] Déclenchement update_db.py distant impossible : {e}')
 
 
 onsuccess:

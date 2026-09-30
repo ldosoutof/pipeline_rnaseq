@@ -66,17 +66,8 @@ docker_workdir:     "/datawork2"
 x_bias_control_vaf:   ""
 x_bias_control_label: ""
 
-# --- Base de données QC SQLite -----------------------------------------------
-qc_db: ""
-
 # --- Snakemake binary --------------------------------------------------------
 snakemake_bin: "/appli/miniconda3/envs/snakemake/bin/snakemake"
-
-# --- Prometheus --------------------------------------------------------------
-prometheus_gateway:          "http://localhost:9091"
-prometheus_gateway_user:     ""
-prometheus_gateway_password: ""
-prometheus_fallback_dir:     ""
 
 # --- Notifications mail -------------------------------------------------------
 smtp_host: "172.27.162.183"
