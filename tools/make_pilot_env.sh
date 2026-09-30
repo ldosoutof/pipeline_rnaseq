@@ -13,7 +13,16 @@
 #
 # Usage :
 #   bash tools/make_pilot_env.sh <run_tag> [--copy-fraser-cache] [--all-runs]
+#        [--samples ID1,ID2] [--subsample N] [--cohort-last K]
 #   ex. bash tools/make_pilot_env.sh 20260819_RUN53_NextSeq_High_16RNASEQ
+#
+# Test de fumée (léger : le pipeline va-t-il jusqu'au bout ?), ex. :
+#   DEV_ROOT=/datawork2/genetique/RNASeq/diag/dev_smoke bash tools/make_pilot_env.sh \
+#       <run_tag> --samples 24D0438,24D2222 --subsample 500000 --cohort-last 2
+#   --samples     : ne garder que les FASTQ de ces échantillons (identifiants courts)
+#   --subsample N : copier les N premières paires de lectures (au lieu de lier les FASTQ)
+#   --cohort-last : ne lier que les K derniers runs antérieurs (petite cohorte)
+#   Ne valide PAS les résultats statistiques (cohorte réduite, lectures tronquées).
 #
 # Variables (valeurs par défaut entre crochets) :
 #   SITE_PATHS  site_paths.yml de production [<dépôt>/template/site_paths.yml]
@@ -30,13 +39,18 @@
 set -euo pipefail
 
 RUN="${1:-}"
-COPY_CACHE=0; ALL_RUNS=0
-for opt in "${@:2}"; do
-    case "$opt" in
+COPY_CACHE=0; ALL_RUNS=0; SAMPLES=""; SUBSAMPLE=0; COHORT_LAST=0
+shift || true
+while [ $# -gt 0 ]; do
+    case "$1" in
         --copy-fraser-cache) COPY_CACHE=1 ;;
         --all-runs)          ALL_RUNS=1 ;;
-        *) echo "[ERROR] option inconnue : $opt"; exit 1 ;;
+        --samples)           SAMPLES="$2"; shift ;;
+        --subsample)         SUBSAMPLE="$2"; shift ;;
+        --cohort-last)       COHORT_LAST="$2"; shift ;;
+        *) echo "[ERROR] option inconnue : $1"; exit 1 ;;
     esac
+    shift
 done
 if [ -z "$RUN" ]; then
     sed -n '2,26p' "$0"; exit 1
@@ -63,19 +77,46 @@ PILOT="$COHORT/$RUN"
 mkdir -p "$COHORT"
 
 echo "[1/5] Cohorte : liens vers les runs de production (sauf $RUN)"
-n=0; skipped=0
+n=0; skipped=0; candidates=()
 for d in "$PROD"/20*_RUN*/; do
     name="$(basename "$d")"
     [ "$name" = "$RUN" ] && continue
     if [ "$ALL_RUNS" = 0 ] && [[ "$name" > "$RUN" ]]; then skipped=$((skipped+1)); continue; fi
-    ln -sfn "${d%/}" "$COHORT/$name"; n=$((n+1))
+    candidates+=("${d%/}")
 done
-echo "      $n runs liés dans $COHORT ; $skipped runs postérieurs exclus (--all-runs pour les inclure)"
+if [ "$COHORT_LAST" -gt 0 ] && [ "${#candidates[@]}" -gt "$COHORT_LAST" ]; then
+    skipped=$((skipped + ${#candidates[@]} - COHORT_LAST))
+    candidates=("${candidates[@]: -$COHORT_LAST}")
+fi
+for d in "${candidates[@]}"; do ln -sfn "$d" "$COHORT/$(basename "$d")"; n=$((n+1)); done
+echo "      $n runs liés dans $COHORT ; $skipped runs exclus (postérieurs, ou hors --cohort-last)"
 
-echo "[2/5] Run pilote : dossier réel, FASTQ liés depuis la production"
+echo "[2/5] Run pilote : dossier réel, FASTQ depuis la production"
 mkdir -p "$PILOT/fastq"
-for f in "$PROD/$RUN"/fastq/*.fastq.gz; do ln -s "$f" "$PILOT/fastq/"; done
-echo "      $(ls "$PILOT/fastq" | wc -l) FASTQ liés"
+nf=0
+for f in "$PROD/$RUN"/fastq/*.fastq.gz; do
+    b="$(basename "$f")"
+    if [ -n "$SAMPLES" ]; then
+        keep=0
+        for id in ${SAMPLES//,/ }; do case "$b" in "$id"-*|"$id"_*|X"$id"-*) keep=1 ;; esac; done
+        [ "$keep" = 1 ] || continue
+    fi
+    if [ "$SUBSAMPLE" -gt 0 ]; then
+        # N premières paires : même nombre de lignes pour R1 et R2 (appariement conservé)
+        set +o pipefail
+        zcat "$f" 2>/dev/null | head -n $((4 * SUBSAMPLE)) | gzip -1 > "$PILOT/fastq/$b"
+        set -o pipefail
+    else
+        ln -s "$f" "$PILOT/fastq/"
+    fi
+    nf=$((nf+1))
+done
+[ "$nf" -gt 0 ] || { echo "[ERROR] aucun FASTQ retenu (vérifier --samples)"; exit 1; }
+if [ "$SUBSAMPLE" -gt 0 ]; then
+    echo "      $nf FASTQ tronqués à $SUBSAMPLE paires ($(du -sh "$PILOT/fastq" | cut -f1))"
+else
+    echo "      $nf FASTQ liés"
+fi
 
 echo "[3/5] Caches FRASER de développement"
 mkdir -p "$DEV_ROOT/Fraser2_2" "$DEV_ROOT/Fraser2_2_hyper"
@@ -114,15 +155,22 @@ with open(out, "w") as f:
 print(f"      {out}")
 PYEOF
 
+mkdir -p "$DEV_ROOT/work"
 cat <<EOF
 
 Environnement prêt. Depuis le clone de développement (branche dev) :
 
   cd $REPO
-  python3 scripts/preprocess.py --path $REPO/ --workDir $REPO/$RUN/ \\
+  python3 scripts/preprocess.py --path $REPO/ --workDir $DEV_ROOT/work/$RUN/ \\
       --dataDir $PILOT/ --site-paths $DEV_ROOT/site_paths_dev.yml
-  cd $REPO/$RUN && bash launch_folder/launch.sh
+  bash $REPO/$RUN/launch_folder/launch.sh 2>&1 | tee $DEV_ROOT/work/$RUN.snakemake.log
 
-Sorties du run pilote : $PILOT/pipeline_v0/
-À comparer avec       : $PROD/$RUN/pipeline_v0/  (non-régression)
+Contrôle de fin de run :
+  python3 tools/check_run_outputs.py --run-dir $PILOT --workdir $DEV_ROOT/work/$RUN \\
+      --snakemake-log $DEV_ROOT/work/$RUN.snakemake.log
+
+Sorties du run : $PILOT/pipeline_v0/   (journal Snakemake : $DEV_ROOT/work/$RUN/log/)
+À comparer avec : $PROD/$RUN/pipeline_v0/  (non-régression : tools/validate_known_events.py --compare)
+NB : config.yml et launch.sh sont écrits dans $REPO/$RUN/launch_folder/ ; ne pas
+préparer en même temps un pilote et un test de fumée sur le même run.
 EOF
